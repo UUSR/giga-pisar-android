@@ -276,9 +276,7 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                     true
                 } else if (event.repeatCount != 0) {
                     false
-                } else if (onLockScreen() ||
-                    insertionMode == InsertionMode.TEXT_FIELD && findFocusedEditable() == null
-                ) {
+                } else if (!volumeKeyAllowed()) {
                     // No text field open (or only the lock screen's PIN): an ordinary volume key.
                     false
                 } else {
@@ -365,6 +363,22 @@ class GigaPisarAccessibilityService : AccessibilityService() {
             focusedNode = node
         }
         updateButtonVisibility()
+    }
+
+    /**
+     * Android Auto keeps the keyguard "locked" under the apps the driver opens on the phone,
+     * so a locked keyguard alone no longer blocks the key: only the lock screen's own fields
+     * (PIN, reply from a notification) do, and so does no field at all.
+     */
+    private fun volumeKeyAllowed(): Boolean {
+        val editable = findFocusedEditable()
+        val locked = onLockScreen()
+        val lockScreenField = editable?.packageName == "com.android.systemui"
+        return when {
+            locked && (editable == null || lockScreenField) -> false
+            insertionMode == InsertionMode.TEXT_FIELD && editable == null -> false
+            else -> true
+        }
     }
 
     /** The PIN or password field of the lock screen is a text field too, but not one for dictation. */
