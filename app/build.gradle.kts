@@ -7,7 +7,7 @@ plugins {
     id("com.diffplug.spotless")
 }
 
-val appVersionName = "0.2.15"
+val appVersionName = "0.2.16-test1"
 val appVersionCode = 33
 
 val localProperties =

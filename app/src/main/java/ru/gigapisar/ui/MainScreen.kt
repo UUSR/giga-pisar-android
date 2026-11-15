@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import ru.gigapisar.R
 import ru.gigapisar.model.ModelManager
 import ru.gigapisar.settings.InsertionMode
+import ru.gigapisar.settings.KeyMode
 import ru.gigapisar.settings.SettingsRepository
 
 @Composable
@@ -45,6 +46,8 @@ fun MainScreen(activity: ComponentActivity) {
     var virtualButtonVisible by remember { mutableStateOf(true) }
     var volumeKeyEnabled by remember { mutableStateOf(true) }
     var sendKey by remember { mutableStateOf(false) }
+    var keyMode by remember { mutableStateOf(KeyMode.ANY) }
+    var keyBrainShorten by remember { mutableStateOf(false) }
     var vibrationEnabled by remember { mutableStateOf(true) }
     var fabGestures by remember { mutableStateOf(true) }
     var noClipboard by remember { mutableStateOf(false) }
@@ -87,6 +90,12 @@ fun MainScreen(activity: ComponentActivity) {
     }
     LaunchedEffect(context) {
         SettingsRepository.sendKey(context).collect { sendKey = it }
+    }
+    LaunchedEffect(context) {
+        SettingsRepository.keyMode(context).collect { keyMode = it }
+    }
+    LaunchedEffect(context) {
+        SettingsRepository.keyBrainShorten(context).collect { keyBrainShorten = it }
     }
     LaunchedEffect(context) {
         SettingsRepository.vibrationEnabled(context).collect { vibrationEnabled = it }
@@ -190,6 +199,10 @@ fun MainScreen(activity: ComponentActivity) {
                     onVolumeKey = { scope.launch { SettingsRepository.setVolumeKeyEnabled(context, it) } },
                     sendKey = sendKey,
                     onSendKey = { scope.launch { SettingsRepository.setSendKey(context, it) } },
+                    keyMode = keyMode,
+                    onKeyMode = { scope.launch { SettingsRepository.setKeyMode(context, it) } },
+                    keyBrainShorten = keyBrainShorten,
+                    onKeyBrainShorten = { scope.launch { SettingsRepository.setKeyBrainShorten(context, it) } },
                     onVibration = { scope.launch { SettingsRepository.setVibrationEnabled(context, it) } },
                     noClipboard = noClipboard,
                     onNoClipboard = { scope.launch { SettingsRepository.setNoClipboard(context, it) } },

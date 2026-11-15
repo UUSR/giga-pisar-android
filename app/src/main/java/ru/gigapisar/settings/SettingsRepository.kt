@@ -15,6 +15,15 @@ private val Context.settingsDataStore by preferencesDataStore(
     name = "giga_pisar_settings",
 )
 
+/** What the volume keys do in a text field. */
+enum class KeyMode {
+    /** Holding either key records; a short press of either sends right after a dictation. */
+    ANY,
+
+    /** Volume down records and sends; a short press of volume up has the Brain edit the last dictation. */
+    BRAIN,
+}
+
 enum class InsertionMode {
     CLIPBOARD,
     TEXT_FIELD,
@@ -32,6 +41,12 @@ object SettingsRepository {
 
     private val sendKeyKey =
         booleanPreferencesKey("send_key")
+
+    private val keyModeKey =
+        stringPreferencesKey("key_mode")
+
+    private val keyBrainShortenKey =
+        booleanPreferencesKey("key_brain_shorten")
 
     private val fabScaleKey =
         floatPreferencesKey("fab_scale")
@@ -68,6 +83,7 @@ object SettingsRepository {
     private val brainSkipShortKey = booleanPreferencesKey("brain_skip_short")
 
     private fun brainPromptKey(kind: Brain.Kind) = stringPreferencesKey("brain_prompt_" + kind.name.lowercase())
+
     private val brainProviderKey = stringPreferencesKey("brain_provider")
     private val brainModelKey = stringPreferencesKey("brain_model")
 
@@ -166,6 +182,32 @@ object SettingsRepository {
         enabled: Boolean,
     ) {
         context.settingsDataStore.edit { it[sendKeyKey] = enabled }
+    }
+
+    /** What the two volume keys do in a text field. */
+    fun keyMode(context: Context): Flow<KeyMode> =
+        context.settingsDataStore.data.map { preferences ->
+            if (preferences[keyModeKey] == KeyMode.BRAIN.name) KeyMode.BRAIN else KeyMode.ANY
+        }
+
+    suspend fun setKeyMode(
+        context: Context,
+        mode: KeyMode,
+    ) {
+        context.settingsDataStore.edit { it[keyModeKey] = mode.name }
+    }
+
+    /** In [KeyMode.BRAIN], what volume up asks the Brain for: false tidies the take up, true shortens it. */
+    fun keyBrainShorten(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[keyBrainShortenKey] ?: false
+        }
+
+    suspend fun setKeyBrainShorten(
+        context: Context,
+        shorten: Boolean,
+    ) {
+        context.settingsDataStore.edit { it[keyBrainShortenKey] = shorten }
     }
 
     /** Never paste through the clipboard: where a field does not take text directly, say so instead. */

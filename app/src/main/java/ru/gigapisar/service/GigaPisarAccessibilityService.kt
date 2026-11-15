@@ -5,8 +5,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.InputMethod
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Rect
 import android.media.AudioManager
 import android.os.Build
@@ -37,6 +37,7 @@ import ru.gigapisar.R
 import ru.gigapisar.audio.AudioRecorder
 import ru.gigapisar.brain.Brain
 import ru.gigapisar.brain.BrainException
+import ru.gigapisar.brain.BrainProvider
 import ru.gigapisar.brain.BrainProviders
 import ru.gigapisar.brain.KeyVault
 import ru.gigapisar.brain.brainRussian
@@ -48,6 +49,7 @@ import ru.gigapisar.overlay.OverlayManager
 import ru.gigapisar.overlay.RecordingPill
 import ru.gigapisar.settings.AppLanguage
 import ru.gigapisar.settings.InsertionMode
+import ru.gigapisar.settings.KeyMode
 import ru.gigapisar.settings.SettingsRepository
 import ru.gigapisar.speech.GigaAmOnnxRecognizer
 import ru.gigapisar.text.Hesitations
@@ -115,23 +117,35 @@ class GigaPisarAccessibilityService : AccessibilityService() {
 
     private var recordingJob: Job? = null
 
-    private var volumeKeyPressed = false
+    /** The volume key whose press is being followed; 0 when none is. */
+    private var heldKey = 0
+
+    /** Whether holding [heldKey] starts a recording, and what a short press of it does. */
+    private var heldKeyRecords = false
+    private var heldKeyTap = Tap.VOLUME
     private var volumeKeyHoldTriggered = false
     private var volumeKeyStartedRecording = false
 
     /** A double press of volume down started a recording that goes on without holding the key. */
     private var volumeKeyHandsFree = false
 
-    /** The second press of a double press: its release must not become a volume step. */
-    private var volumeKeySwallowUp = false
+    /** The key whose release must not become a volume step (the second press of a double press); 0 when none. */
+    private var swallowedKey = 0
 
     /** A short press that waits to see whether a second one follows. */
     private var volumeKeyPendingTap: Runnable? = null
 
-    /** Volume up sends only for a short while after a dictation went into a field of this app. */
-    private var sendKeyPressed = false
+    private var keyMode = KeyMode.ANY
+    private var keyBrainShorten = false
+
+    /** A short press sends only for a short while after a dictation went into a field of this app. */
     private var sendArmedUntil = 0L
-    private var sendArmedPackage: String? = null
+
+    /** The last dictation that went into a field, and until when volume up may hand it to the Brain. */
+    private var lastTake: Take? = null
+    private var brainArmedUntil = 0L
+    private var takePackage: String? = null
+    private var brainJob: Job? = null
 
     @Volatile
     private var recording = false
@@ -141,7 +155,7 @@ class GigaPisarAccessibilityService : AccessibilityService() {
 
     private val volumeKeyHoldRunnable =
         Runnable {
-            if (!volumeKeyPressed) {
+            if (heldKey == 0) {
                 return@Runnable
             }
 
@@ -264,6 +278,18 @@ class GigaPisarAccessibilityService : AccessibilityService() {
 
         serviceScope.launch {
             SettingsRepository
+                .keyMode(this@GigaPisarAccessibilityService)
+                .collectLatest { mode -> keyMode = mode }
+        }
+
+        serviceScope.launch {
+            SettingsRepository
+                .keyBrainShorten(this@GigaPisarAccessibilityService)
+                .collectLatest { shorten -> keyBrainShorten = shorten }
+        }
+
+        serviceScope.launch {
+            SettingsRepository
                 .noClipboard(this@GigaPisarAccessibilityService)
                 .collectLatest { enabled -> noClipboard = enabled }
         }
@@ -306,105 +332,141 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-            return handleSendKey(event)
-        }
-        if (event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+        val key = event.keyCode
+        if (key != KeyEvent.KEYCODE_VOLUME_DOWN && key != KeyEvent.KEYCODE_VOLUME_UP) {
             return false
         }
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        val released = event.action == KeyEvent.ACTION_UP
 
         // The release of a press that began a hands-free recording or ended one: swallowed, so
         // that the system does not turn it into a volume step of its own.
-        if (volumeKeySwallowUp) {
-            if (event.action == KeyEvent.ACTION_UP) {
-                volumeKeySwallowUp = false
-                return true
-            }
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                return true
-            }
+        if (swallowedKey == key) {
+            if (released) swallowedKey = 0
+            return true
         }
 
         // A hands-free recording (a double press started it) ends on the next single press, no
         // matter which app or field is in front by then.
-        if (volumeKeyHandsFree) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                volumeKeySwallowUp = true
+        if (volumeKeyHandsFree && recordsWith(key)) {
+            if (pressed && event.repeatCount == 0) {
+                swallowedKey = key
                 handleRecordingStop()
             }
             return true
         }
 
-        // Turned off in settings: the key is plain volume again. A press that began
-        // while it was on still gets its release, so a recording never hangs.
-        if (!volumeKeyEnabled && !volumeKeyPressed) {
+        if (heldKey != 0) {
+            // The other key during a press stays what it is in the system.
+            if (key != heldKey) return false
+            if (released) finishKeyPress(event)
+            return true
+        }
+
+        if (!pressed || event.repeatCount != 0) {
+            return false
+        }
+        // No text field open (or only the lock screen's PIN): ordinary volume keys.
+        if (!volumeKeyAllowed()) {
             return false
         }
 
-        return when (event.action) {
-            KeyEvent.ACTION_DOWN -> {
-                if (volumeKeyPressed) {
-                    true
-                } else if (event.repeatCount != 0) {
-                    false
-                } else if (!volumeKeyAllowed()) {
-                    // No text field open (or only the lock screen's PIN): an ordinary volume key.
-                    false
-                } else if (volumeKeyPendingTap != null) {
-                    // The second press of a double press: record without holding instead of
-                    // lowering the volume a second time.
-                    cancelPendingVolumeTap()
-                    volumeKeySwallowUp = true
-                    startVolumeHandsFree()
-                    true
-                } else {
-                    volumeKeyPressed = true
-                    volumeKeyHoldTriggered = false
-                    volumeKeyStartedRecording = false
-                    mainHandler.postDelayed(
-                        volumeKeyHoldRunnable,
-                        VOLUME_RECORDING_HOLD_DELAY_MS,
-                    )
-                    true
-                }
-            }
+        // Recording by key may be off in settings: then a key is taken only for its short press.
+        val records = volumeKeyEnabled && recordsWith(key)
+        val tap = tapAction(key)
+        // Volume up in the Brain mode never records, and a hold of it does nothing at all: a
+        // finger that missed volume down does not run the sound up to the top.
+        val guarded =
+            volumeKeyEnabled &&
+                key == KeyEvent.KEYCODE_VOLUME_UP &&
+                keyMode == KeyMode.BRAIN &&
+                insertionMode == InsertionMode.TEXT_FIELD
+        if (!records && !guarded && tap == Tap.VOLUME) {
+            return false
+        }
 
-            KeyEvent.ACTION_UP -> {
-                if (!volumeKeyPressed) {
-                    return false
-                }
+        if (records && key == KeyEvent.KEYCODE_VOLUME_DOWN && volumeKeyPendingTap != null) {
+            // The second press of a double press: record without holding instead of
+            // lowering the volume a second time.
+            cancelPendingVolumeTap()
+            swallowedKey = key
+            startVolumeHandsFree()
+            return true
+        }
 
-                mainHandler.removeCallbacks(volumeKeyHoldRunnable)
-                volumeKeyPressed = false
+        heldKey = key
+        heldKeyRecords = records
+        heldKeyTap = tap
+        volumeKeyHoldTriggered = false
+        volumeKeyStartedRecording = false
+        if (records) {
+            mainHandler.postDelayed(volumeKeyHoldRunnable, VOLUME_RECORDING_HOLD_DELAY_MS)
+        }
+        return true
+    }
 
-                if (volumeKeyHoldTriggered) {
-                    if (volumeKeyStartedRecording) {
-                        handleRecordingStop()
-                    }
-                } else {
-                    // A short press may be the first half of a double press, so the volume step
-                    // waits for the window: otherwise a hands-free recording would begin with the
-                    // sound already lowered.
-                    schedulePendingVolumeTap()
-                }
+    /** The key that was being followed is let go: a hold ends its recording, a short press acts. */
+    private fun finishKeyPress(event: KeyEvent) {
+        val key = heldKey
+        val records = heldKeyRecords
+        val tap = heldKeyTap
+        mainHandler.removeCallbacks(volumeKeyHoldRunnable)
+        heldKey = 0
 
-                volumeKeyHoldTriggered = false
-                volumeKeyStartedRecording = false
-                true
-            }
+        when {
+            volumeKeyHoldTriggered -> if (volumeKeyStartedRecording) handleRecordingStop()
+            // A key that does not record was held, not tapped: nothing happens.
+            !records && event.eventTime - event.downTime >= VOLUME_RECORDING_HOLD_DELAY_MS -> Unit
+            // A short press of volume down may be the first half of a double press, so it waits
+            // for the window: otherwise a hands-free recording would begin with the sound
+            // already lowered, or with the message already sent.
+            records && key == KeyEvent.KEYCODE_VOLUME_DOWN -> schedulePendingVolumeTap(key, tap)
+            else -> performTap(key, tap)
+        }
 
-            else -> volumeKeyPressed
+        volumeKeyHoldTriggered = false
+        volumeKeyStartedRecording = false
+    }
+
+    /** What a short press of a volume key means. */
+    private enum class Tap { VOLUME, SEND, BRAIN }
+
+    /** Holding volume down records; volume up does too in [KeyMode.ANY], in a text field. */
+    private fun recordsWith(key: Int): Boolean =
+        key == KeyEvent.KEYCODE_VOLUME_DOWN ||
+            keyMode == KeyMode.ANY &&
+            insertionMode == InsertionMode.TEXT_FIELD
+
+    private fun tapAction(key: Int): Tap =
+        when {
+            keyMode == KeyMode.BRAIN && key == KeyEvent.KEYCODE_VOLUME_UP ->
+                if (brainKeyArmed()) Tap.BRAIN else Tap.VOLUME
+            sendKeyArmed() -> Tap.SEND
+            else -> Tap.VOLUME
+        }
+
+    private fun performTap(
+        key: Int,
+        tap: Tap,
+    ) {
+        when (tap) {
+            Tap.VOLUME -> stepVolume(key)
+            Tap.SEND -> sendWithKey(key)
+            Tap.BRAIN -> editLastTake()
         }
     }
 
-    /** A short press: lower the volume, unless a second press arrives first and makes it a double. */
-    private fun schedulePendingVolumeTap() {
+    /** A short press of volume down acts only if no second press arrives first and makes it a double. */
+    private fun schedulePendingVolumeTap(
+        key: Int,
+        tap: Tap,
+    ) {
         cancelPendingVolumeTap()
 
         val runnable =
             Runnable {
                 volumeKeyPendingTap = null
-                lowerVolume()
+                performTap(key, tap)
             }
 
         volumeKeyPendingTap = runnable
@@ -416,14 +478,15 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         volumeKeyPendingTap = null
     }
 
-    private fun lowerVolume() {
+    /** One volume step, the way the key itself would have made it. */
+    private fun stepVolume(key: Int) {
         // The stream is named outright: some firmwares (Vivo) ignore "let Android pick" from a service.
         val inCall =
             audioManager.mode == AudioManager.MODE_IN_CALL ||
                 audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
         audioManager.adjustStreamVolume(
             if (inCall) AudioManager.STREAM_VOICE_CALL else AudioManager.STREAM_MUSIC,
-            AudioManager.ADJUST_LOWER,
+            if (key == KeyEvent.KEYCODE_VOLUME_UP) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
             AudioManager.FLAG_SHOW_UI,
         )
     }
@@ -511,15 +574,16 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     }
 
     /** The PIN or password field of the lock screen is a text field too, but not one for dictation. */
-    private fun onLockScreen(): Boolean =
-        getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
+    private fun onLockScreen(): Boolean = getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
 
     private fun updateButtonVisibility() {
         val shouldShow =
             fabPreviewing ||
                 // A hands-free recording is ended only with the button: it stays until then —
                 // but only if the button was on in the first place, not instead of the pill.
-                recording && overlay.handsFree && virtualButtonEnabled ||
+                recording &&
+                overlay.handsFree &&
+                virtualButtonEnabled ||
                 virtualButtonEnabled &&
                 (
                     insertionMode == InsertionMode.CLIPBOARD ||
@@ -580,7 +644,12 @@ class GigaPisarAccessibilityService : AccessibilityService() {
      * anyone dictates into: no button there, and the volume key stays plain volume.
      */
     private fun forDictation(node: AccessibilityNodeInfo): Boolean {
-        val type = try { node.inputType } catch (_: Exception) { 0 }
+        val type =
+            try {
+                node.inputType
+            } catch (_: Exception) {
+                0
+            }
         val pkg = node.packageName?.toString()
         return forDictation(type, pkg)
     }
@@ -723,6 +792,7 @@ class GigaPisarAccessibilityService : AccessibilityService() {
 
         recording = false
         volumeKeyHandsFree = false
+        lastTake = null
 
         overlay.setProcessing()
         pill.showProcessing()
@@ -818,6 +888,8 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                                         pill.hide()
                                     }
                                     if (inserted) armSendKey()
+                                    // A password is never sent to a cloud service, by key either.
+                                    insertion?.takeIf { focusedNode?.isPassword != true }?.let { armBrainKey(it, text) }
                                 }
                             }
                         }
@@ -867,17 +939,8 @@ class GigaPisarAccessibilityService : AccessibilityService() {
      */
     private fun applyBrain(text: String): BrainOutcome {
         val settings = brainSettings
-        if (!settings.enabled || text.isBlank()) return BrainOutcome(text)
-        val listed = BrainProviders.byId(settings.providerId) ?: return BrainOutcome(text)
-        // A local server lives at the address the person typed; clouds have theirs in the table.
-        val provider =
-            if (listed.local) {
-                settings.ollamaUrl.takeIf { it.isNotBlank() }?.let(BrainProviders::ollamaAt) ?: return BrainOutcome(text)
-            } else {
-                listed
-            }
-        val model = settings.model ?: return BrainOutcome(text)
-        val key = KeyVault.load(this, provider.id) ?: if (provider.local) "" else return BrainOutcome(text)
+        if (text.isBlank()) return BrainOutcome(text)
+        val target = brainTarget(settings) ?: return BrainOutcome(text)
         val parsed = Brain.parseCommand(text)
         if (parsed == null && !settings.everyTake) return BrainOutcome(text)
         // A failed command still puts in what was said before "Писарь".
@@ -885,13 +948,135 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         // A short take is fine as dictated: no request, no wait. A command always runs.
         if (parsed == null && Brain.tooShortToEdit(body, settings.skipShort)) return BrainOutcome(text)
         return try {
-            val answer = Brain.transform(provider, key, model, body, parsed?.second, settings.shorten, settings.prompts)
+            val answer =
+                Brain.transform(
+                    target.provider,
+                    target.key,
+                    target.model,
+                    body,
+                    parsed?.second,
+                    settings.shorten,
+                    settings.prompts,
+                )
             BrainOutcome(answer, original = body.takeIf { it != answer })
         } catch (error: BrainException) {
             BrainOutcome(body, failure = error.message ?: "")
         } catch (_: Exception) {
             BrainOutcome(body, failure = ui().getString(R.string.brain_failed_unknown))
         }
+    }
+
+    /** The service, key and model the Brain is set up with; null when it is off or not set up. */
+    private class BrainTarget(
+        val provider: BrainProvider,
+        val key: String,
+        val model: String,
+    )
+
+    private fun brainTarget(settings: SettingsRepository.BrainSettings): BrainTarget? {
+        if (!settings.enabled) return null
+        val listed = BrainProviders.byId(settings.providerId) ?: return null
+        // A local server lives at the address the person typed; clouds have theirs in the table.
+        val provider =
+            if (listed.local) {
+                settings.ollamaUrl.takeIf { it.isNotBlank() }?.let(BrainProviders::ollamaAt) ?: return null
+            } else {
+                listed
+            }
+        val model = settings.model ?: return null
+        val key = KeyVault.load(this, provider.id) ?: if (provider.local) "" else return null
+        return BrainTarget(provider, key, model)
+    }
+
+    /** A dictation in a field: where it went and what went in, so the Brain can edit it in place. */
+    private class Take(
+        val insertion: TextInserter.Insertion,
+        val text: String,
+    )
+
+    /** Text just went into a field: for a short while volume up may hand it to the Brain. */
+    private fun armBrainKey(
+        insertion: TextInserter.Insertion,
+        text: String,
+    ) {
+        lastTake = Take(insertion, text)
+        takePackage = focusedNode?.packageName?.toString() ?: activePackage()
+        brainArmedUntil = SystemClock.uptimeMillis() + SEND_KEY_WINDOW_MS
+    }
+
+    /** Volume up edits only a fresh dictation, in the same app, with the Brain set up; otherwise it is plain volume. */
+    private fun brainKeyArmed(): Boolean =
+        lastTake != null &&
+            insertionMode == InsertionMode.TEXT_FIELD &&
+            !recording &&
+            recordingJob?.isActive != true &&
+            brainJob?.isActive != true &&
+            SystemClock.uptimeMillis() < brainArmedUntil &&
+            takePackage != null &&
+            takePackage == activePackage() &&
+            !onLockScreen() &&
+            findFocusedEditable() != null &&
+            brainTarget(brainSettings) != null
+
+    /**
+     * Volume up in [KeyMode.BRAIN]: the last dictation goes through the Brain and is swapped in
+     * the field for what came back, with the usual "Вернуть" above it.
+     */
+    private fun editLastTake() {
+        val take = lastTake ?: return
+        val settings = brainSettings
+        val target = brainTarget(settings) ?: return
+        val shorten = keyBrainShorten
+        val until = brainArmedUntil
+        // One edit at a time, and no sending of a text that is about to change.
+        brainArmedUntil = 0L
+        sendArmedUntil = 0L
+        pill.showProcessing()
+        buzz()
+
+        brainJob =
+            serviceScope.launch(Dispatchers.IO) {
+                var failure: String? = null
+                val answer =
+                    try {
+                        Brain
+                            .transform(target.provider, target.key, target.model, take.text, null, shorten, settings.prompts)
+                            .let { if (noFinalPeriod) SimpleSyntax.withoutFinalPeriod(it) else it }
+                    } catch (error: BrainException) {
+                        failure = error.message ?: ""
+                        null
+                    } catch (_: Exception) {
+                        failure = ui().getString(R.string.brain_failed_unknown)
+                        null
+                    }
+
+                withContext(Dispatchers.Main) {
+                    // A new dictation began meanwhile: this answer is about a text that is no longer the last one.
+                    if (lastTake !== take) return@withContext
+                    when {
+                        answer == null -> {
+                            // The text stays as dictated; the keys work on it as before the press.
+                            brainArmedUntil = maxOf(until, SystemClock.uptimeMillis() + SEND_KEY_RETRY_MS)
+                            armSendKey()
+                            notifyUser(ui().getString(R.string.brain_key_failed, failure), 6000)
+                        }
+
+                        answer == take.text -> {
+                            armSendKey()
+                            notifyUser(ui().getString(R.string.brain_key_unchanged))
+                        }
+
+                        !inserter.replaceInserted(take.insertion, take.text, answer) ->
+                            notifyUser(ui().getString(R.string.brain_key_field_changed), 4000)
+
+                        else -> {
+                            lastTake = Take(take.insertion, answer)
+                            armSendKey()
+                            offerUndo(answer, take.text, take.insertion)
+                        }
+                    }
+                }
+            }
     }
 
     /** When the undo offer went up: our own text change right after must not dismiss it. */
@@ -1128,10 +1313,10 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Text just went into a field: for a short while volume up means "send". */
+    /** Text just went into a field: for a short while a short press of a volume key means "send". */
     private fun armSendKey() {
         if (!sendKeyEnabled) return
-        sendArmedPackage = focusedNode?.packageName?.toString() ?: activePackage()
+        takePackage = focusedNode?.packageName?.toString() ?: activePackage()
         sendArmedUntil = SystemClock.uptimeMillis() + SEND_KEY_WINDOW_MS
     }
 
@@ -1142,61 +1327,47 @@ class GigaPisarAccessibilityService : AccessibilityService() {
             null
         }
 
-    /** Volume up sends only when armed, in the same app, with a field still focused; otherwise it is plain volume. */
+    /** A key sends only when armed, in the same app, with a field still focused; otherwise it is plain volume. */
     private fun sendKeyArmed(): Boolean =
         sendKeyEnabled &&
             insertionMode == InsertionMode.TEXT_FIELD &&
             !recording &&
+            brainJob?.isActive != true &&
             SystemClock.uptimeMillis() < sendArmedUntil &&
-            sendArmedPackage != null &&
-            sendArmedPackage == activePackage() &&
+            takePackage != null &&
+            takePackage == activePackage() &&
             !onLockScreen() &&
             findFocusedEditable() != null
 
-    private fun handleSendKey(event: KeyEvent): Boolean =
-        when (event.action) {
-            KeyEvent.ACTION_DOWN -> {
-                when {
-                    sendKeyPressed -> true
-                    event.repeatCount != 0 -> false
-                    !sendKeyArmed() -> false
-                    else -> {
-                        sendKeyPressed = true
-                        true
-                    }
-                }
-            }
-
-            KeyEvent.ACTION_UP -> {
-                if (!sendKeyPressed) {
-                    false
-                } else {
-                    sendKeyPressed = false
-                    sendArmedUntil = 0L
-                    if (performSend()) {
-                        buzz()
-                        // The message is gone: there is nothing left to put back.
-                        if (pillOffersUndo && pill.showsAction) pill.hide()
-                    } else {
-                        // No send button here: the press stays an ordinary volume-up, and the pill says why.
-                        audioManager.adjustStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            AudioManager.ADJUST_RAISE,
-                            AudioManager.FLAG_SHOW_UI,
-                        )
-                        notifyUser(ui().getString(R.string.send_button_missing))
-                    }
-                    true
-                }
-            }
-
-            else -> sendKeyPressed
+    /** A short press right after a dictation: tap "Send" for the person. */
+    private fun sendWithKey(key: Int) {
+        // The press may have waited out the double-press window: the field must still be there.
+        if (!sendKeyArmed()) {
+            stepVolume(key)
+            return
         }
+        sendArmedUntil = 0L
+        brainArmedUntil = 0L
+        if (performSend()) {
+            buzz()
+            // The message is gone: there is nothing left to put back.
+            if (pillOffersUndo && pill.showsAction) pill.hide()
+        } else {
+            // No send button here: the press stays an ordinary volume step, and the pill says why.
+            stepVolume(key)
+            notifyUser(ui().getString(R.string.send_button_missing))
+        }
+    }
 
     /** Taps the app's "Send" button; failing that, the keyboard's send action of a single-line field. */
     private fun performSend(): Boolean {
         val field = findFocusedEditable()
-        val root = try { rootInActiveWindow } catch (_: Exception) { null }
+        val root =
+            try {
+                rootInActiveWindow
+            } catch (_: Exception) {
+                null
+            }
         val bounds =
             field?.let { node ->
                 try {
@@ -1207,7 +1378,12 @@ class GigaPisarAccessibilityService : AccessibilityService() {
             }
         val button = root?.let { SendButton.find(it, bounds) }
         if (button != null) {
-            val clicked = try { button.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Exception) { false }
+            val clicked =
+                try {
+                    button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } catch (_: Exception) {
+                    false
+                }
             if (clicked) return true
         }
         if (field != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !field.isMultiLine) {
@@ -1223,10 +1399,10 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     private fun cancelVolumeKeyGesture() {
         mainHandler.removeCallbacks(volumeKeyHoldRunnable)
         cancelPendingVolumeTap()
-        volumeKeyPressed = false
+        heldKey = 0
         volumeKeyHoldTriggered = false
         volumeKeyStartedRecording = false
-        volumeKeySwallowUp = false
+        swallowedKey = 0
         volumeKeyHandsFree = false
     }
 
@@ -1237,8 +1413,11 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         /** How long a short press waits for a second one: within it the pair means "record hands-free". */
         private const val VOLUME_DOUBLE_TAP_WINDOW_MS = 400L
 
-        /** How long after an insertion volume up still means "send". */
+        /** How long after an insertion a short press still means "send" (or, for volume up, "edit"). */
         private const val SEND_KEY_WINDOW_MS = 20_000L
+
+        /** After a failed Brain edit the key gets at least this long for another try. */
+        private const val SEND_KEY_RETRY_MS = 10_000L
 
         /** How long the size preview stays after the slider stops. */
         private const val FAB_PREVIEW_LINGER_MS = 1200L
