@@ -941,7 +941,8 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         val settings = brainSettings
         if (text.isBlank()) return BrainOutcome(text)
         val target = brainTarget(settings) ?: return BrainOutcome(text)
-        val parsed = Brain.parseCommand(text)
+        // With voice commands off, "Писарь, …" is ordinary speech.
+        val parsed = if (settings.commands) Brain.parseCommand(text) else null
         if (parsed == null && !settings.everyTake) return BrainOutcome(text)
         // A failed command still puts in what was said before "Писарь".
         val body = parsed?.first ?: text
@@ -966,7 +967,7 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** The service, key and model the Brain is set up with; null when it is off or not set up. */
+    /** The service, key and model the Brain is set up with; null when it is not set up. */
     private class BrainTarget(
         val provider: BrainProvider,
         val key: String,
@@ -974,7 +975,6 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     )
 
     private fun brainTarget(settings: SettingsRepository.BrainSettings): BrainTarget? {
-        if (!settings.enabled) return null
         val listed = BrainProviders.byId(settings.providerId) ?: return null
         // A local or own server lives at the address the person typed; clouds have theirs in the table.
         val provider = BrainProviders.endpoint(listed, settings.ollamaUrl, settings.customUrl) ?: return null

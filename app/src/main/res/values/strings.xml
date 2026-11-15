@@ -117,6 +117,9 @@
     <string name="brain_key">Ключ сервиса</string>
     <string name="brain_switch">Мозг</string>
     <string name="brain_switch_hint">Команды голосом в конце фразы: «…Писарь, сделай короче»</string>
+    <string name="brain_commands">Команды голосом</string>
+    <string name="brain_key_edit">Править верхней кнопкой</string>
+    <string name="brain_key_edit_hint">Нижняя кнопка громкости пишет и отправляет. Короткое нажатие верхней в течение 20 секунд после диктовки отдаёт текст Мозгу</string>
     <string name="no_final_period">Без точки в конце</string>
     <string name="no_final_period_hint">Диктовка вставляется без последней точки, сколько бы в ней ни было предложений. Вопросительный и восклицательный знаки остаются</string>
     <string name="drop_hesitations">Убирать «э-э» и «м-м»</string>

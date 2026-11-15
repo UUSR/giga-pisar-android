@@ -1,6 +1,8 @@
 package ru.gigapisar.settings
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -80,7 +82,9 @@ object SettingsRepository {
     /** A page or two of rules is plenty; more only slows the model down. */
     const val BRAIN_PROMPT_MAX = 8000
 
+    /** Before 0.2.16 one switch turned the whole Brain on; now each thing it does has its own. */
     private val brainEnabledKey = booleanPreferencesKey("brain_enabled")
+    private val brainCommandsKey = booleanPreferencesKey("brain_commands")
     private val brainEveryTakeKey = booleanPreferencesKey("brain_every_take")
     private val brainShortenKey = booleanPreferencesKey("brain_shorten")
     private val brainSkipShortKey = booleanPreferencesKey("brain_skip_short")
@@ -333,8 +337,13 @@ object SettingsRepository {
 
     /** Brain settings in one piece; the key itself lives in [ru.gigapisar.brain.KeyVault]. */
     data class BrainSettings(
-        val enabled: Boolean = false,
+        /** Commands by voice at the end of a take: "…Писарь, сделай короче". */
+        val commands: Boolean = false,
         val everyTake: Boolean = false,
+        /** Volume up hands the last take to the Brain (key mode "down records, up edits"). */
+        val keyEdit: Boolean = false,
+        /** What volume up asks for: false tidies the take up, true shortens it. */
+        val keyShorten: Boolean = false,
         /** "Edit on the fly" style: false tidies the take up, true makes a short message of it. */
         val shorten: Boolean = false,
         /** "Edit on the fly" leaves a short take alone: it goes in at once, with no request. */
@@ -349,13 +358,19 @@ object SettingsRepository {
         val customUrl: String = "",
         /** The last model chosen for each service, so switching services keeps each one's pick. */
         val modelsByProvider: Map<String, String> = emptyMap(),
-    )
+    ) {
+        /** Something is switched on for the Brain to do. */
+        val inUse: Boolean get() = commands || everyTake || keyEdit
+    }
 
     fun brain(context: Context): Flow<BrainSettings> =
         context.settingsDataStore.data.map { preferences ->
             BrainSettings(
-                enabled = preferences[brainEnabledKey] ?: false,
-                everyTake = preferences[brainEveryTakeKey] ?: false,
+                commands = preferences[brainCommandsKey] ?: (preferences[brainEnabledKey] ?: false),
+                // The old switch was off: "edit on the fly" under it did nothing, and still must not.
+                everyTake = !switchedOffBefore(preferences) && (preferences[brainEveryTakeKey] ?: false),
+                keyEdit = preferences[keyModeKey] == KeyMode.BRAIN.name,
+                keyShorten = preferences[keyBrainShortenKey] ?: false,
                 shorten = preferences[brainShortenKey] ?: false,
                 skipShort = preferences[brainSkipShortKey] ?: true,
                 prompts =
@@ -377,18 +392,49 @@ object SettingsRepository {
             )
         }
 
+    private fun switchedOffBefore(preferences: Preferences): Boolean =
+        preferences[brainCommandsKey] == null && preferences[brainEnabledKey] == false
+
+    /** Moves the old single switch over to the separate ones, once; nothing turns on by itself. */
+    private fun splitOldSwitch(preferences: MutablePreferences) {
+        if (preferences[brainCommandsKey] != null) return
+        val wasOn = preferences[brainEnabledKey] ?: false
+        if (!wasOn) preferences[brainEveryTakeKey] = false
+        preferences[brainCommandsKey] = wasOn
+    }
+
+    /** A service was just connected (voice commands come on the first time) or the last one forgotten. */
     suspend fun setBrainEnabled(
         context: Context,
         enabled: Boolean,
     ) {
-        context.settingsDataStore.edit { it[brainEnabledKey] = enabled }
+        context.settingsDataStore.edit {
+            if (enabled && it[brainCommandsKey] == null) {
+                splitOldSwitch(it)
+                it[brainCommandsKey] = true
+            }
+            it[brainEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setBrainCommands(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        context.settingsDataStore.edit {
+            splitOldSwitch(it)
+            it[brainCommandsKey] = enabled
+        }
     }
 
     suspend fun setBrainEveryTake(
         context: Context,
         enabled: Boolean,
     ) {
-        context.settingsDataStore.edit { it[brainEveryTakeKey] = enabled }
+        context.settingsDataStore.edit {
+            splitOldSwitch(it)
+            it[brainEveryTakeKey] = enabled
+        }
     }
 
     suspend fun setBrainShorten(

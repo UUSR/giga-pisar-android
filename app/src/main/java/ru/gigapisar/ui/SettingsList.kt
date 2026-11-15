@@ -151,15 +151,6 @@ internal fun SettingsList(
                 selected = keyMode == KeyMode.BRAIN,
                 onClick = { onKeyMode(KeyMode.BRAIN) },
             )
-            if (keyMode == KeyMode.BRAIN) {
-                SwitchRow(
-                    icon = Icons.Outlined.Compress,
-                    title = R.string.key_brain_shorten,
-                    subtitle = R.string.key_brain_shorten_hint,
-                    checked = keyBrainShorten,
-                    onChange = onKeyBrainShorten,
-                )
-            }
             SwitchRow(
                 icon = Icons.AutoMirrored.Outlined.Send,
                 title = R.string.send_key,

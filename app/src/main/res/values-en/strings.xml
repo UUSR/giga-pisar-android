@@ -117,6 +117,9 @@
     <string name="brain_key">Service key</string>
     <string name="brain_switch">Brain</string>
     <string name="brain_switch_hint">Voice commands at the end of a phrase: “…Pisar, make it shorter”</string>
+    <string name="brain_commands">Voice commands</string>
+    <string name="brain_key_edit">Edit with volume up</string>
+    <string name="brain_key_edit_hint">Volume down records and sends. A short press of volume up within 20 seconds after a dictation hands the text to the Brain</string>
     <string name="no_final_period">No period at the end</string>
     <string name="no_final_period_hint">The take goes in without its final period, however many sentences it has. Question and exclamation marks stay</string>
     <string name="drop_hesitations">Remove “uh” and “um”</string>

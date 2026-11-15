@@ -76,6 +76,7 @@ import ru.gigapisar.brain.BrainProvider
 import ru.gigapisar.brain.BrainProviders
 import ru.gigapisar.brain.KeyVault
 import ru.gigapisar.brain.say
+import ru.gigapisar.settings.KeyMode
 import ru.gigapisar.settings.SettingsRepository
 
 /** The Brain row in the main settings list: its state at a glance, opens the Brain page. */
@@ -94,10 +95,10 @@ internal fun BrainRow(
             Text(
                 when {
                     !ready -> stringResource(R.string.brain_row_none)
-                    brain.enabled -> stringResource(R.string.brain_row_on, provider!!.name, brain.model!!)
+                    brain.inUse -> stringResource(R.string.brain_row_on, provider!!.name, brain.model!!)
                     else -> stringResource(R.string.brain_row_off, provider!!.name)
                 },
-                color = if (ready && brain.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (ready && brain.inUse) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
         leadingContent = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
@@ -195,6 +196,66 @@ internal fun BrainScreen(
 }
 
 private enum class BrainTab { CLOUD, CUSTOM, LOCAL }
+
+/**
+ * What the Brain does, each thing with its own switch: voice commands, every take, the volume
+ * key. Nothing depends on another; all of it waits for a connected service ([active]).
+ */
+@Composable
+private fun BrainOptions(
+    active: Boolean,
+    brain: SettingsRepository.BrainSettings,
+    onEditPrompt: (Brain.Kind) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    SwitchItem(
+        icon = Icons.Outlined.Psychology,
+        title = R.string.brain_commands,
+        subtitle = R.string.brain_switch_hint,
+        checked = active && brain.commands,
+        enabled = active,
+        onChange = { on -> scope.launch { SettingsRepository.setBrainCommands(context, on) } },
+    )
+    SwitchItem(
+        icon = Icons.Outlined.AutoFixHigh,
+        title = R.string.brain_every_take,
+        subtitle = R.string.brain_every_take_hint,
+        checked = active && brain.everyTake,
+        enabled = active,
+        onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
+    )
+    if (active && brain.everyTake) {
+        EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
+        SwitchItem(
+            icon = Icons.Outlined.Bolt,
+            title = R.string.brain_skip_short,
+            subtitle = R.string.brain_skip_short_hint,
+            checked = brain.skipShort,
+            enabled = true,
+            onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
+        )
+    }
+    SwitchItem(
+        icon = Icons.Outlined.Key,
+        title = R.string.brain_key_edit,
+        subtitle = R.string.brain_key_edit_hint,
+        checked = active && brain.keyEdit,
+        enabled = active,
+        onChange = { on -> scope.launch { SettingsRepository.setKeyMode(context, if (on) KeyMode.BRAIN else KeyMode.ANY) } },
+    )
+    if (active && brain.keyEdit) {
+        SwitchItem(
+            icon = Icons.Outlined.Bolt,
+            title = R.string.key_brain_shorten,
+            subtitle = R.string.key_brain_shorten_hint,
+            checked = brain.keyShorten,
+            enabled = true,
+            onChange = { on -> scope.launch { SettingsRepository.setKeyBrainShorten(context, on) } },
+        )
+    }
+    if (active) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+}
 
 /**
  * The "Local server" tab (Ollama over the home network, #32) is hidden for now: it needs
@@ -306,34 +367,7 @@ private fun BrainCloudTab(
     ) {
         StatusCard(status = status, ready = ready, active = active, model = brain.model)
 
-        SwitchItem(
-            icon = Icons.Outlined.Psychology,
-            title = R.string.brain_switch,
-            subtitle = R.string.brain_switch_hint,
-            checked = ready && brain.enabled,
-            enabled = ready,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEnabled(context, on) } },
-        )
-        SwitchItem(
-            icon = Icons.Outlined.AutoFixHigh,
-            title = R.string.brain_every_take,
-            subtitle = R.string.brain_every_take_hint,
-            checked = ready && brain.enabled && brain.everyTake,
-            enabled = ready && brain.enabled,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
-        )
-        if (ready && brain.enabled && brain.everyTake) {
-            EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
-            SwitchItem(
-                icon = Icons.Outlined.Bolt,
-                title = R.string.brain_skip_short,
-                subtitle = R.string.brain_skip_short_hint,
-                checked = brain.skipShort,
-                enabled = true,
-                onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
-            )
-        }
-        if (ready && brain.enabled) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+        BrainOptions(active = ready, brain = brain, onEditPrompt = onEditPrompt)
 
         if (saved.isNotEmpty()) {
             SectionTitle(R.string.brain_services)
@@ -558,34 +592,7 @@ private fun BrainCustomTab(
             model = brain.model.takeIf { customActive },
         )
 
-        SwitchItem(
-            icon = Icons.Outlined.Psychology,
-            title = R.string.brain_switch,
-            subtitle = R.string.brain_switch_hint,
-            checked = customActive && brain.enabled,
-            enabled = customActive,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEnabled(context, on) } },
-        )
-        SwitchItem(
-            icon = Icons.Outlined.AutoFixHigh,
-            title = R.string.brain_every_take,
-            subtitle = R.string.brain_every_take_hint,
-            checked = customActive && brain.enabled && brain.everyTake,
-            enabled = customActive && brain.enabled,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
-        )
-        if (customActive && brain.enabled && brain.everyTake) {
-            EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
-            SwitchItem(
-                icon = Icons.Outlined.Bolt,
-                title = R.string.brain_skip_short,
-                subtitle = R.string.brain_skip_short_hint,
-                checked = brain.skipShort,
-                enabled = true,
-                onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
-            )
-        }
-        if (customActive && brain.enabled) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+        BrainOptions(active = customActive, brain = brain, onEditPrompt = onEditPrompt)
 
         if (customActive && models.size > 1) {
             SectionTitle(R.string.brain_models)
@@ -836,34 +843,7 @@ private fun BrainLocalTab(
             model = brain.model.takeIf { ollamaActive },
         )
 
-        SwitchItem(
-            icon = Icons.Outlined.Psychology,
-            title = R.string.brain_switch,
-            subtitle = R.string.brain_switch_hint,
-            checked = ollamaActive && brain.enabled,
-            enabled = ollamaActive,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEnabled(context, on) } },
-        )
-        SwitchItem(
-            icon = Icons.Outlined.AutoFixHigh,
-            title = R.string.brain_every_take,
-            subtitle = R.string.brain_every_take_hint,
-            checked = ollamaActive && brain.enabled && brain.everyTake,
-            enabled = ollamaActive && brain.enabled,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
-        )
-        if (ollamaActive && brain.enabled && brain.everyTake) {
-            EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
-            SwitchItem(
-                icon = Icons.Outlined.Bolt,
-                title = R.string.brain_skip_short,
-                subtitle = R.string.brain_skip_short_hint,
-                checked = brain.skipShort,
-                enabled = true,
-                onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
-            )
-        }
-        if (ollamaActive && brain.enabled) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+        BrainOptions(active = ollamaActive, brain = brain, onEditPrompt = onEditPrompt)
 
         if (ollamaActive && models.isNotEmpty()) {
             SectionTitle(R.string.brain_models)
