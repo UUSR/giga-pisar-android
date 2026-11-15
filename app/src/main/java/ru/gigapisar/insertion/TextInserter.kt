@@ -136,7 +136,10 @@ class TextInserter(
         text: String,
     ): Insertion? {
         val connection = keyboardConnection() ?: return null
-        connection.commitText(text, 1, null)
+        val before = connection.getSurroundingText(1, 0, 0)?.let { around ->
+            around.text.take(around.selectionStart.coerceIn(0, around.text.length)).lastOrNull()
+        }
+        connection.commitText(Spacing.separator(before, text) + text, 1, null)
         return Insertion(node, -1, keyboard = true)
     }
 
@@ -185,9 +188,12 @@ class TextInserter(
         // An empty field (or one showing only its hint) may report no cursor at all (-1): there is
         // nothing to lose, write from the start. Any other field without a cursor goes to paste.
         if (selStart !in 0..current.length && current.isNotEmpty()) return null
-        val start = selStart.coerceIn(0, current.length)
-        val end = if (selEnd in start..current.length) selEnd else start
-        val updated = current.substring(0, start) + text + current.substring(end)
+        val cursor = selStart.coerceIn(0, current.length)
+        val end = if (selEnd in cursor..current.length) selEnd else cursor
+        // A second dictation must not stick to the first one: a space goes in between.
+        val separator = Spacing.separator(current.getOrNull(cursor - 1), text)
+        val start = cursor + separator.length
+        val updated = current.substring(0, cursor) + separator + text + current.substring(end)
         if (!setText(node, updated, start + text.length)) return null
         // Some apps accept the action but ignore it: only count it when the field shows a change.
         // Browsers and Keep apply it a moment later or reshape the text (line breaks), so wait a
@@ -212,8 +218,11 @@ class TextInserter(
     ): Insertion? {
         val current = fieldText(node)
         val selStart = node.textSelectionStart
-        val start = if (selStart in 0..current.length) selStart else current.length
-        putToClipboard(text, transient = true)
+        val cursor = if (selStart in 0..current.length) selStart else current.length
+        // A password shows dots, not its text: nothing to tell from them.
+        val separator = if (node.isPassword) "" else Spacing.separator(current.getOrNull(cursor - 1), text)
+        val start = cursor + separator.length
+        putToClipboard(separator + text, transient = true)
         // Cleared either way: a failed paste must not leave the dictation on the clipboard.
         mainHandler.postDelayed(::clearClipboard, CLIPBOARD_CLEAR_DELAY_MS)
         if (!node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return null
