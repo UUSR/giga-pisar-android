@@ -976,15 +976,10 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     private fun brainTarget(settings: SettingsRepository.BrainSettings): BrainTarget? {
         if (!settings.enabled) return null
         val listed = BrainProviders.byId(settings.providerId) ?: return null
-        // A local server lives at the address the person typed; clouds have theirs in the table.
-        val provider =
-            if (listed.local) {
-                settings.ollamaUrl.takeIf { it.isNotBlank() }?.let(BrainProviders::ollamaAt) ?: return null
-            } else {
-                listed
-            }
+        // A local or own server lives at the address the person typed; clouds have theirs in the table.
+        val provider = BrainProviders.endpoint(listed, settings.ollamaUrl, settings.customUrl) ?: return null
         val model = settings.model ?: return null
-        val key = KeyVault.load(this, provider.id) ?: if (provider.local) "" else return null
+        val key = KeyVault.load(this, provider.id) ?: if (provider.local || provider.custom) "" else return null
         return BrainTarget(provider, key, model)
     }
 
