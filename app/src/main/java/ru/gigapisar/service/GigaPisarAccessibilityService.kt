@@ -9,7 +9,6 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.media.AudioAttributes
-import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -372,9 +371,9 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         if (!volumeKeyAllowed()) {
             return false
         }
-        // A call, or sound from the phone's own speaker or earpiece: the keys are the system's.
-        // Nobody dictates over that sound, and the system knows which volume it is.
-        if (phoneSoundsAloud()) {
+        // A call, or something is playing: the keys are the system's. Nobody dictates over
+        // sound, and the system knows which volume is the one heard.
+        if (soundIsPlaying()) {
             return false
         }
 
@@ -514,23 +513,8 @@ class GigaPisarAccessibilityService : AccessibilityService() {
             emptyList()
         }
 
-    /**
-     * A call is on, or the phone itself plays something: through its speaker or, held to the
-     * ear, through the earpiece. With headphones the sound does not reach the microphone, so
-     * dictation by key stays.
-     */
-    private fun phoneSoundsAloud(): Boolean {
-        if (inCall()) return true
-        val playing = audioManager.isMusicActive || activeUsages().any { it in PLAYBACK_USAGES }
-        return playing && !headphonesConnected()
-    }
-
-    private fun headphonesConnected(): Boolean =
-        try {
-            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in HEADPHONE_TYPES }
-        } catch (_: Exception) {
-            false
-        }
+    /** A call is on or something is playing, no matter where: speaker, earpiece or headphones. */
+    private fun soundIsPlaying(): Boolean = inCall() || audioManager.isMusicActive || activeUsages().any { it in PLAYBACK_USAGES }
 
     /**
      * A double press of volume down: the recording goes on without holding the key, and the next
@@ -1453,17 +1437,6 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                 AudioAttributes.USAGE_GAME,
                 AudioAttributes.USAGE_VOICE_COMMUNICATION,
                 AudioAttributes.USAGE_UNKNOWN,
-            )
-
-        private val HEADPHONE_TYPES =
-            setOf(
-                AudioDeviceInfo.TYPE_WIRED_HEADSET,
-                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-                AudioDeviceInfo.TYPE_USB_HEADSET,
-                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-                AudioDeviceInfo.TYPE_BLE_HEADSET,
-                AudioDeviceInfo.TYPE_HEARING_AID,
             )
 
         /** How long a short press waits for a second one: within it the pair means "record hands-free". */

@@ -75,7 +75,7 @@
     <string name="floating_button_always">A round record button over other apps</string>
     <string name="floating_button_text_field">Shows up when a text field is open</string>
     <string name="volume_key">Record with the volume key</string>
-    <string name="volume_key_hint">In a text field, hold volume down and speak. Double press volume down for hands-free recording, one more press ends it. A short press changes the volume; outside a field the keys work as usual</string>
+    <string name="volume_key_hint">In a text field, hold volume down and speak. Double press volume down for hands-free recording, one more press ends it. A short press changes the volume. Outside a field and while sound is playing the keys work as usual</string>
     <string name="send_key">Send with a volume key</string>
     <string name="send_key_hint">Once the dictated text is in the field, press either volume key briefly and Pisar taps the messenger\'s Send button. Works for 20 seconds after an insertion; the rest of the time the keys change the volume as usual</string>
     <string name="send_key_hint_down">Once the dictated text is in the field, press volume down briefly and Pisar taps the messenger\'s Send button. Works for 20 seconds after an insertion; the rest of the time the key lowers the volume as usual</string>
