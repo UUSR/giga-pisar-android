@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
+import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -370,6 +372,11 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         if (!volumeKeyAllowed()) {
             return false
         }
+        // A call, or sound from the phone's own speaker or earpiece: the keys are the system's.
+        // Nobody dictates over that sound, and the system knows which volume it is.
+        if (phoneSoundsAloud()) {
+            return false
+        }
 
         // Recording by key may be off in settings: then a key is taken only for its short press.
         val records = volumeKeyEnabled && recordsWith(key)
@@ -481,15 +488,49 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     /** One volume step, the way the key itself would have made it. */
     private fun stepVolume(key: Int) {
         // The stream is named outright: some firmwares (Vivo) ignore "let Android pick" from a service.
-        val inCall =
-            audioManager.mode == AudioManager.MODE_IN_CALL ||
-                audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
+        // A messenger may play a voice message the way a call sounds without entering a call
+        // mode, so the mode alone does not tell which volume is heard.
+        val voice = inCall() || activeUsages().contains(AudioAttributes.USAGE_VOICE_COMMUNICATION)
         audioManager.adjustStreamVolume(
-            if (inCall) AudioManager.STREAM_VOICE_CALL else AudioManager.STREAM_MUSIC,
+            if (voice) AudioManager.STREAM_VOICE_CALL else AudioManager.STREAM_MUSIC,
             if (key == KeyEvent.KEYCODE_VOLUME_UP) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
             AudioManager.FLAG_SHOW_UI,
         )
     }
+
+    private fun inCall(): Boolean =
+        audioManager.mode == AudioManager.MODE_IN_CALL ||
+            audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
+
+    /** What is being played right now, as the usages of the active players. */
+    private fun activeUsages(): List<Int> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                audioManager.activePlaybackConfigurations.map { it.audioAttributes.usage }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+
+    /**
+     * A call is on, or the phone itself plays something: through its speaker or, held to the
+     * ear, through the earpiece. With headphones the sound does not reach the microphone, so
+     * dictation by key stays.
+     */
+    private fun phoneSoundsAloud(): Boolean {
+        if (inCall()) return true
+        val playing = audioManager.isMusicActive || activeUsages().any { it in PLAYBACK_USAGES }
+        return playing && !headphonesConnected()
+    }
+
+    private fun headphonesConnected(): Boolean =
+        try {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in HEADPHONE_TYPES }
+        } catch (_: Exception) {
+            false
+        }
 
     /**
      * A double press of volume down: the recording goes on without holding the key, and the next
@@ -1404,6 +1445,26 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     companion object {
         // An ordinary tap lasts 100-200 ms; recording starts only on a deliberate hold.
         private const val VOLUME_RECORDING_HOLD_DELAY_MS = 350L
+
+        /** Sound a person listens to; key clicks and notification sounds are not in the list. */
+        private val PLAYBACK_USAGES =
+            setOf(
+                AudioAttributes.USAGE_MEDIA,
+                AudioAttributes.USAGE_GAME,
+                AudioAttributes.USAGE_VOICE_COMMUNICATION,
+                AudioAttributes.USAGE_UNKNOWN,
+            )
+
+        private val HEADPHONE_TYPES =
+            setOf(
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                AudioDeviceInfo.TYPE_USB_HEADSET,
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_BLE_HEADSET,
+                AudioDeviceInfo.TYPE_HEARING_AID,
+            )
 
         /** How long a short press waits for a second one: within it the pair means "record hands-free". */
         private const val VOLUME_DOUBLE_TAP_WINDOW_MS = 400L
