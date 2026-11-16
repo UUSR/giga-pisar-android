@@ -100,6 +100,19 @@ object BrainProviders {
         return Custom.copy(baseUrl = url, name = host)
     }
 
+    /**
+     * Whether two typed addresses lead to the same server. A key saved for one server must
+     * never be sent to another, so the saved key is reused only when this holds.
+     */
+    fun sameCustomServer(
+        a: String,
+        b: String,
+    ): Boolean {
+        val first = customAt(a)?.name ?: return false
+        val second = customAt(b)?.name ?: return false
+        return first.equals(second, ignoreCase = true)
+    }
+
     /** The service a request would actually go to: a typed address in place of the table's one. */
     fun endpoint(
         provider: BrainProvider?,

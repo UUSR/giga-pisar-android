@@ -530,7 +530,9 @@ private fun BrainCustomTab(
             status = Status.Failed(context.getString(R.string.brain_custom_bad_url))
             return
         }
-        val useKey = rawKey.trim().ifBlank { savedKey ?: "" }
+        // The saved key belongs to the saved server. A new address gets only a key typed for it.
+        val sameServer = BrainProviders.sameCustomServer(address, brain.customUrl)
+        val useKey = rawKey.trim().ifBlank { savedKey?.takeIf { sameServer } ?: "" }
         status = Status.Checking
         scope.launch {
             try {
@@ -550,7 +552,12 @@ private fun BrainCustomTab(
                         BrainClient.probe(server, useKey, want)
                         want
                     }
-                if (rawKey.isNotBlank()) KeyVault.save(context, BrainProviders.Custom.id, rawKey.trim())
+                if (rawKey.isNotBlank()) {
+                    KeyVault.save(context, BrainProviders.Custom.id, rawKey.trim())
+                } else if (!sameServer) {
+                    // Otherwise later requests would carry the old server's key to the new one.
+                    KeyVault.clear(context, BrainProviders.Custom.id)
+                }
                 SettingsRepository.setCustomUrl(context, address)
                 SettingsRepository.setBrainService(context, BrainProviders.Custom.id, picked)
                 if (!customActive) SettingsRepository.setBrainEveryTake(context, false)
@@ -640,9 +647,7 @@ private fun BrainCustomTab(
                 supportingText = {
                     Text(
                         stringResource(
-                            if (savedKey !=
-                                null
-                            ) {
+                            if (savedKey != null && BrainProviders.sameCustomServer(url, brain.customUrl)) {
                                 R.string.brain_custom_key_saved
                             } else {
                                 R.string.brain_custom_key_hint
