@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -371,9 +372,11 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         if (!volumeKeyAllowed()) {
             return false
         }
-        // A call, or something is playing: the keys are the system's. Nobody dictates over
-        // sound, and the system knows which volume is the one heard.
-        if (soundIsPlaying()) {
+        // The phone itself sounds, through its speaker or the earpiece: the keys are the
+        // system's. Nobody dictates over that, and the system knows which volume is heard.
+        // With a car, a speaker or headphones connected nothing changes: people dictate in a
+        // car with its audio on, and a connected car can look like playback even in silence.
+        if (!externalOutputConnected() && soundIsPlaying()) {
             return false
         }
 
@@ -513,8 +516,19 @@ class GigaPisarAccessibilityService : AccessibilityService() {
             emptyList()
         }
 
-    /** A call is on or something is playing, no matter where: speaker, earpiece or headphones. */
+    /** A call is on or something is playing. */
     private fun soundIsPlaying(): Boolean = inCall() || audioManager.isMusicActive || activeUsages().any { it in PLAYBACK_USAGES }
+
+    /**
+     * A car, a speaker or headphones are connected, by Bluetooth or by wire. Android does not
+     * tell a car from headphones without the Bluetooth permission, so they are all one case.
+     */
+    private fun externalOutputConnected(): Boolean =
+        try {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in EXTERNAL_OUTPUT_TYPES }
+        } catch (_: Exception) {
+            false
+        }
 
     /**
      * A double press of volume down: the recording goes on without holding the key, and the next
@@ -1431,6 +1445,24 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         private const val VOLUME_RECORDING_HOLD_DELAY_MS = 350L
 
         /** Sound a person listens to; key clicks and notification sounds are not in the list. */
+        private val EXTERNAL_OUTPUT_TYPES =
+            setOf(
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_BLE_HEADSET,
+                AudioDeviceInfo.TYPE_BLE_SPEAKER,
+                AudioDeviceInfo.TYPE_BLE_BROADCAST,
+                AudioDeviceInfo.TYPE_HEARING_AID,
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                AudioDeviceInfo.TYPE_USB_HEADSET,
+                AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_USB_ACCESSORY,
+                AudioDeviceInfo.TYPE_AUX_LINE,
+                AudioDeviceInfo.TYPE_LINE_ANALOG,
+                AudioDeviceInfo.TYPE_DOCK,
+            )
+
         private val PLAYBACK_USAGES =
             setOf(
                 AudioAttributes.USAGE_MEDIA,
