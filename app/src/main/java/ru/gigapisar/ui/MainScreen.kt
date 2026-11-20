@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import ru.gigapisar.R
 import ru.gigapisar.model.ModelManager
 import ru.gigapisar.settings.InsertionMode
+import ru.gigapisar.settings.KeyMode
 import ru.gigapisar.settings.SettingsRepository
 
 @Composable
@@ -45,6 +46,8 @@ fun MainScreen(activity: ComponentActivity) {
     var virtualButtonVisible by remember { mutableStateOf(true) }
     var volumeKeyEnabled by remember { mutableStateOf(true) }
     var sendKey by remember { mutableStateOf(false) }
+    var keyMode by remember { mutableStateOf(KeyMode.ANY) }
+    var keyBrainShorten by remember { mutableStateOf(false) }
     var vibrationEnabled by remember { mutableStateOf(true) }
     var fabGestures by remember { mutableStateOf(true) }
     var noClipboard by remember { mutableStateOf(false) }
@@ -60,6 +63,7 @@ fun MainScreen(activity: ComponentActivity) {
         mutableStateOf(isAccessibilityServiceEnabled(context))
     }
     var microphoneGranted by remember { mutableStateOf(isMicrophonePermissionGranted(context)) }
+    var oemSetupDone by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val permissionLauncher =
         rememberLauncherForActivityResult(
@@ -89,6 +93,12 @@ fun MainScreen(activity: ComponentActivity) {
         SettingsRepository.sendKey(context).collect { sendKey = it }
     }
     LaunchedEffect(context) {
+        SettingsRepository.keyMode(context).collect { keyMode = it }
+    }
+    LaunchedEffect(context) {
+        SettingsRepository.keyBrainShorten(context).collect { keyBrainShorten = it }
+    }
+    LaunchedEffect(context) {
         SettingsRepository.vibrationEnabled(context).collect { vibrationEnabled = it }
     }
     LaunchedEffect(context) {
@@ -114,6 +124,9 @@ fun MainScreen(activity: ComponentActivity) {
     }
     LaunchedEffect(context) {
         SettingsRepository.fabHiddenApps(context).collect { fabHidden = it }
+    }
+    LaunchedEffect(context) {
+        SettingsRepository.oemSetupDone(context).collect { oemSetupDone = it }
     }
     val hiddenAppNames = remember(fabHidden) { appLabels(context, fabHidden) }
 
@@ -164,8 +177,10 @@ fun MainScreen(activity: ComponentActivity) {
                         SetupWizard(
                             microphoneGranted = microphoneGranted,
                             accessibilityEnabled = accessibilityEnabled,
+                            oemSetupDone = oemSetupDone,
                             onRequestMicrophone = requestMicrophone,
                             onOpenAccessibilitySettings = openAccessibilitySettings,
+                            onOemSetupDone = { scope.launch { SettingsRepository.setOemSetupDone(context, true) } },
                             onModelInstalled = { modelInstalled = true },
                         )
                     }
@@ -190,6 +205,10 @@ fun MainScreen(activity: ComponentActivity) {
                     onVolumeKey = { scope.launch { SettingsRepository.setVolumeKeyEnabled(context, it) } },
                     sendKey = sendKey,
                     onSendKey = { scope.launch { SettingsRepository.setSendKey(context, it) } },
+                    keyMode = keyMode,
+                    onKeyMode = { scope.launch { SettingsRepository.setKeyMode(context, it) } },
+                    keyBrainShorten = keyBrainShorten,
+                    onKeyBrainShorten = { scope.launch { SettingsRepository.setKeyBrainShorten(context, it) } },
                     onVibration = { scope.launch { SettingsRepository.setVibrationEnabled(context, it) } },
                     noClipboard = noClipboard,
                     onNoClipboard = { scope.launch { SettingsRepository.setNoClipboard(context, it) } },

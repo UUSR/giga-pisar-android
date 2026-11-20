@@ -1,11 +1,11 @@
 {
-  "version": "0.2.15",
-  "versionCode": 33,
-  "url": "https://github.com/moznoazachem/giga-pisar-android/releases/download/v0.2.15/GigaPisar.apk",
-  "sha256": "282f629155737c4d5ffabaf1834adaf33dcbfd107c55f4186281d9c49e95df38",
-  "size": 58176280,
+  "version": "0.2.16",
+  "versionCode": 34,
+  "url": "https://github.com/moznoazachem/giga-pisar-android/releases/download/v0.2.16/GigaPisar.apk",
+  "sha256": "dc3e54e8cbd91a572b4acad9ce61a2d2746adbfa19047d9a722a3060f0a474aa",
+  "size": 58218632,
   "notes": {
-    "ru": "«Сократить»: из долгой речи одно короткое сообщение. Редактор инструкций Мозга. Отправка громкостью вверх. Samsung Notes. «Э-э» убираются без интернета, короткие диктовки без Мозга, без точки в конце.",
-    "en": "Shorten: a long ramble becomes one short message. Brain instructions editor. Send with volume up. Samsung Notes. \"Uh\" removed offline, short takes skip the Brain, no final period."
+    "ru": "Два режима кнопок громкости: пишет любая или нижняя пишет, а верхняя правит Мозгом. Запись без удержания двойным нажатием. Свой сервер для Мозга. Отдельные выключатели на экране «Мозг». Пробел между диктовками. Громкость не перехватывается, пока телефон играет звук.",
+    "en": "Two volume key modes: either key records, or down records and up edits with the Brain. Hands-free recording by double press. Your own server for the Brain. Separate switches on the Brain screen. A space between dictations. Volume keys are left alone while the phone plays sound."
   }
 }

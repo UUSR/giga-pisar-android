@@ -139,4 +139,14 @@ class BrainTest {
         val long = "Слушай, я тут подумал насчёт дачи, давай всё-таки поедем в субботу, а не в воскресенье."
         assertFalse(Brain.tooShortToEdit(long, skipShort = true))
     }
+
+    @Test
+    fun savedKeyStaysWithItsServer() {
+        assertTrue(BrainProviders.sameCustomServer("https://api.example.com/v1", "https://API.example.com"))
+        assertTrue(BrainProviders.sameCustomServer("https://api.example.com/v1/", "https://api.example.com/other/v1"))
+        assertFalse(BrainProviders.sameCustomServer("https://api.example.com/v1", "https://api.example.org/v1"))
+        assertFalse(BrainProviders.sameCustomServer("https://api.example.com/v1", "https://api.example.com:8443/v1"))
+        assertFalse(BrainProviders.sameCustomServer("https://api.example.com/v1", ""))
+        assertFalse(BrainProviders.sameCustomServer("", ""))
+    }
 }

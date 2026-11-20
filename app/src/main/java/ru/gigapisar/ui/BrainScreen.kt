@@ -74,8 +74,9 @@ import ru.gigapisar.brain.BrainClient
 import ru.gigapisar.brain.BrainException
 import ru.gigapisar.brain.BrainProvider
 import ru.gigapisar.brain.BrainProviders
-import ru.gigapisar.brain.say
 import ru.gigapisar.brain.KeyVault
+import ru.gigapisar.brain.say
+import ru.gigapisar.settings.KeyMode
 import ru.gigapisar.settings.SettingsRepository
 
 /** The Brain row in the main settings list: its state at a glance, opens the Brain page. */
@@ -85,8 +86,8 @@ internal fun BrainRow(
     onOpen: () -> Unit,
 ) {
     val context = LocalContext.current
-    val provider = BrainProviders.byId(brain.providerId)
-    val ready = provider != null && brain.model != null && KeyVault.load(context, provider.id) != null
+    val provider = BrainProviders.endpoint(BrainProviders.byId(brain.providerId), brain.ollamaUrl, brain.customUrl)
+    val ready = provider != null && brain.model != null && (provider.local || KeyVault.load(context, provider.id) != null)
     SectionTitle(R.string.section_brain)
     ListItem(
         headlineContent = { Text(stringResource(R.string.brain_switch)) },
@@ -94,10 +95,10 @@ internal fun BrainRow(
             Text(
                 when {
                     !ready -> stringResource(R.string.brain_row_none)
-                    brain.enabled -> stringResource(R.string.brain_row_on, provider!!.name, brain.model!!)
+                    brain.inUse -> stringResource(R.string.brain_row_on, provider!!.name, brain.model!!)
                     else -> stringResource(R.string.brain_row_off, provider!!.name)
                 },
-                color = if (ready && brain.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (ready && brain.inUse) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
         leadingContent = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
@@ -137,6 +138,7 @@ internal fun BrainScreen(
     var tab by rememberSaveable { mutableStateOf(BrainTab.CLOUD) }
     var editing by rememberSaveable { mutableStateOf<Brain.Kind?>(null) }
     val ollamaActive = brain.providerId == BrainProviders.Ollama.id
+    val customActive = brain.providerId == BrainProviders.Custom.id
     // Whoever had a local server chosen in a test build: the Brain quietly goes off.
     LaunchedEffect(ollamaActive) {
         if (!LOCAL_SERVER_ENABLED && ollamaActive) {
@@ -148,6 +150,14 @@ internal fun BrainScreen(
         BrainPromptEditor(kind = kind, custom = brain.prompts.of(kind), onClose = { editing = null })
         return
     }
+    val tabs =
+        if (LOCAL_SERVER_ENABLED) {
+            listOf(BrainTab.CLOUD, BrainTab.CUSTOM, BrainTab.LOCAL)
+        } else {
+            listOf(BrainTab.CLOUD, BrainTab.CUSTOM)
+        }
+    // A saved tab may be gone (the local one is hidden for now): fall back to the first.
+    val shown = tab.takeIf { it in tabs } ?: BrainTab.CLOUD
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -158,21 +168,94 @@ internal fun BrainScreen(
             }
             Text(stringResource(R.string.brain_switch), style = MaterialTheme.typography.titleLarge)
         }
-        if (LOCAL_SERVER_ENABLED) {
-            TabRow(selectedTabIndex = tab.ordinal) {
-                Tab(selected = tab == BrainTab.CLOUD, onClick = { tab = BrainTab.CLOUD }, text = { Text(stringResource(R.string.brain_tab_cloud)) })
-                Tab(selected = tab == BrainTab.LOCAL, onClick = { tab = BrainTab.LOCAL }, text = { Text(stringResource(R.string.brain_tab_local)) })
+        TabRow(selectedTabIndex = tabs.indexOf(shown)) {
+            for (t in tabs) {
+                Tab(
+                    selected = shown == t,
+                    onClick = { tab = t },
+                    text = {
+                        Text(
+                            stringResource(
+                                when (t) {
+                                    BrainTab.CLOUD -> R.string.brain_tab_cloud
+                                    BrainTab.CUSTOM -> R.string.brain_tab_custom
+                                    BrainTab.LOCAL -> R.string.brain_tab_local
+                                },
+                            ),
+                        )
+                    },
+                )
             }
         }
-        if (tab == BrainTab.CLOUD || !LOCAL_SERVER_ENABLED) {
-            BrainCloudTab(brain = brain, onEditPrompt = { editing = it })
-        } else {
-            BrainLocalTab(brain = brain, ollamaActive = ollamaActive, onEditPrompt = { editing = it })
+        when (shown) {
+            BrainTab.CLOUD -> BrainCloudTab(brain = brain, onEditPrompt = { editing = it })
+            BrainTab.CUSTOM -> BrainCustomTab(brain = brain, customActive = customActive, onEditPrompt = { editing = it })
+            BrainTab.LOCAL -> BrainLocalTab(brain = brain, ollamaActive = ollamaActive, onEditPrompt = { editing = it })
         }
     }
 }
 
-private enum class BrainTab { CLOUD, LOCAL }
+private enum class BrainTab { CLOUD, CUSTOM, LOCAL }
+
+/**
+ * What the Brain does, each thing with its own switch: voice commands, every take, the volume
+ * key. Nothing depends on another; all of it waits for a connected service ([active]).
+ */
+@Composable
+private fun BrainOptions(
+    active: Boolean,
+    brain: SettingsRepository.BrainSettings,
+    onEditPrompt: (Brain.Kind) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    SwitchItem(
+        icon = Icons.Outlined.Psychology,
+        title = R.string.brain_commands,
+        subtitle = R.string.brain_switch_hint,
+        checked = active && brain.commands,
+        enabled = active,
+        onChange = { on -> scope.launch { SettingsRepository.setBrainCommands(context, on) } },
+    )
+    SwitchItem(
+        icon = Icons.Outlined.AutoFixHigh,
+        title = R.string.brain_every_take,
+        subtitle = R.string.brain_every_take_hint,
+        checked = active && brain.everyTake,
+        enabled = active,
+        onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
+    )
+    if (active && brain.everyTake) {
+        EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
+        SwitchItem(
+            icon = Icons.Outlined.Bolt,
+            title = R.string.brain_skip_short,
+            subtitle = R.string.brain_skip_short_hint,
+            checked = brain.skipShort,
+            enabled = true,
+            onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
+        )
+    }
+    SwitchItem(
+        icon = Icons.Outlined.Key,
+        title = R.string.brain_key_edit,
+        subtitle = R.string.brain_key_edit_hint,
+        checked = active && brain.keyEdit,
+        enabled = active,
+        onChange = { on -> scope.launch { SettingsRepository.setKeyMode(context, if (on) KeyMode.BRAIN else KeyMode.ANY) } },
+    )
+    if (active && brain.keyEdit) {
+        SwitchItem(
+            icon = Icons.Outlined.Bolt,
+            title = R.string.key_brain_shorten,
+            subtitle = R.string.key_brain_shorten_hint,
+            checked = brain.keyShorten,
+            enabled = true,
+            onChange = { on -> scope.launch { SettingsRepository.setKeyBrainShorten(context, on) } },
+        )
+    }
+    if (active) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+}
 
 /**
  * The "Local server" tab (Ollama over the home network, #32) is hidden for now: it needs
@@ -284,34 +367,7 @@ private fun BrainCloudTab(
     ) {
         StatusCard(status = status, ready = ready, active = active, model = brain.model)
 
-        SwitchItem(
-            icon = Icons.Outlined.Psychology,
-            title = R.string.brain_switch,
-            subtitle = R.string.brain_switch_hint,
-            checked = ready && brain.enabled,
-            enabled = ready,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEnabled(context, on) } },
-        )
-        SwitchItem(
-            icon = Icons.Outlined.AutoFixHigh,
-            title = R.string.brain_every_take,
-            subtitle = R.string.brain_every_take_hint,
-            checked = ready && brain.enabled && brain.everyTake,
-            enabled = ready && brain.enabled,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
-        )
-        if (ready && brain.enabled && brain.everyTake) {
-            EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
-            SwitchItem(
-                icon = Icons.Outlined.Bolt,
-                title = R.string.brain_skip_short,
-                subtitle = R.string.brain_skip_short_hint,
-                checked = brain.skipShort,
-                enabled = true,
-                onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
-            )
-        }
-        if (ready && brain.enabled) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+        BrainOptions(active = ready, brain = brain, onEditPrompt = onEditPrompt)
 
         if (saved.isNotEmpty()) {
             SectionTitle(R.string.brain_services)
@@ -391,7 +447,7 @@ private fun BrainCloudTab(
                 else -> {
                     Text(stringResource(R.string.brain_pick_service), style = MaterialTheme.typography.bodySmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for (p in BrainProviders.all) {
+                        for (p in BrainProviders.cloud) {
                             FilterChip(selected = chosen == p, onClick = { chosen = p }, label = { Text(p.name) })
                         }
                     }
@@ -419,6 +475,229 @@ private fun BrainCloudTab(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp),
         )
+    }
+}
+
+/**
+ * The "own server" tab: any OpenAI-compatible API at an address the person types — a gateway,
+ * a proxy, a self-hosted service. A key is optional (local gateways take none), and a model
+ * can be typed by hand: not every gateway lists its models.
+ */
+@Composable
+private fun BrainCustomTab(
+    brain: SettingsRepository.BrainSettings,
+    customActive: Boolean,
+    onEditPrompt: (Brain.Kind) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var url by remember { mutableStateOf(brain.customUrl) }
+    var key by remember { mutableStateOf("") }
+    var manualModel by remember {
+        mutableStateOf(
+            brain.modelsByProvider[BrainProviders.Custom.id]
+                ?: brain.model.takeIf { customActive }
+                ?: "",
+        )
+    }
+    var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var status by remember { mutableStateOf<Status>(Status.Idle) }
+    val savedKey = KeyVault.load(context, BrainProviders.Custom.id)
+
+    LaunchedEffect(customActive, brain.customUrl, savedKey) {
+        if (!customActive) return@LaunchedEffect
+        models = emptyList()
+        val server = BrainProviders.customAt(brain.customUrl) ?: return@LaunchedEffect
+        val stored = KeyVault.load(context, BrainProviders.Custom.id) ?: ""
+        models =
+            withContext(Dispatchers.IO) {
+                try {
+                    BrainProviders.chatModels(BrainClient.listModels(server, stored))
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+    }
+
+    /** Checks the address (and the key, when one is given) and makes this service the active one. */
+    fun connect(
+        address: String,
+        rawKey: String,
+        model: String?,
+    ) {
+        val server = BrainProviders.customAt(address)
+        if (server == null) {
+            status = Status.Failed(context.getString(R.string.brain_custom_bad_url))
+            return
+        }
+        // The saved key belongs to the saved server. A new address gets only a key typed for it.
+        val sameServer = BrainProviders.sameCustomServer(address, brain.customUrl)
+        val useKey = rawKey.trim().ifBlank { savedKey?.takeIf { sameServer } ?: "" }
+        status = Status.Checking
+        scope.launch {
+            try {
+                val picked =
+                    withContext(Dispatchers.IO) {
+                        val want =
+                            model?.takeIf { it.isNotBlank() } ?: run {
+                                val list =
+                                    try {
+                                        BrainProviders.chatModels(BrainClient.listModels(server, useKey))
+                                    } catch (_: BrainException) {
+                                        // Some gateways do not list models; the field below is the way then.
+                                        emptyList()
+                                    }
+                                BrainProviders.pickDefault(server, list)
+                            } ?: throw BrainException(context.getString(R.string.brain_no_model))
+                        BrainClient.probe(server, useKey, want)
+                        want
+                    }
+                if (rawKey.isNotBlank()) {
+                    KeyVault.save(context, BrainProviders.Custom.id, rawKey.trim())
+                } else if (!sameServer) {
+                    // Otherwise later requests would carry the old server's key to the new one.
+                    KeyVault.clear(context, BrainProviders.Custom.id)
+                }
+                SettingsRepository.setCustomUrl(context, address)
+                SettingsRepository.setBrainService(context, BrainProviders.Custom.id, picked)
+                if (!customActive) SettingsRepository.setBrainEveryTake(context, false)
+                SettingsRepository.setBrainEnabled(context, true)
+                key = ""
+                status = Status.Ok(context.getString(R.string.brain_check_ok, server.name, picked))
+            } catch (e: BrainException) {
+                status = Status.Failed(e.message ?: "")
+            } catch (e: Exception) {
+                status = Status.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun disconnect() {
+        KeyVault.clear(context, BrainProviders.Custom.id)
+        scope.launch {
+            SettingsRepository.forgetBrainService(context, BrainProviders.Custom.id)
+            SettingsRepository.setBrainEnabled(context, false)
+            SettingsRepository.setBrainService(context, null, null)
+        }
+        models = emptyList()
+        status = Status.Idle
+    }
+
+    val server = BrainProviders.customAt(brain.customUrl)
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(bottom = 24.dp),
+    ) {
+        StatusCard(
+            status = status,
+            ready = customActive && brain.model != null,
+            active = server?.takeIf { customActive },
+            model = brain.model.takeIf { customActive },
+        )
+
+        BrainOptions(active = customActive, brain = brain, onEditPrompt = onEditPrompt)
+
+        if (customActive && models.size > 1) {
+            SectionTitle(R.string.brain_models)
+            for (m in models.take(30)) {
+                ListItem(
+                    headlineContent = { Text(m) },
+                    leadingContent = { Icon(Icons.Outlined.Memory, contentDescription = null) },
+                    trailingContent = { RadioButton(selected = m == brain.model, onClick = null) },
+                    modifier =
+                        Modifier.selectable(selected = m == brain.model, role = Role.RadioButton) {
+                            if (m != brain.model && status != Status.Checking) connect(brain.customUrl, "", m)
+                        },
+                )
+            }
+        }
+
+        SectionTitle(R.string.brain_tab_custom)
+        val schemeOk = url.trim().startsWith("https://")
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            OutlinedTextField(
+                value = url,
+                onValueChange = {
+                    url = it
+                    if (status is Status.Failed) status = Status.Idle
+                },
+                label = { Text(stringResource(R.string.brain_custom_placeholder)) },
+                leadingIcon = { Icon(Icons.Outlined.Dns, contentDescription = null) },
+                singleLine = true,
+                supportingText = { Text(stringResource(R.string.brain_custom_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = key,
+                onValueChange = {
+                    key = it
+                    if (status is Status.Failed) status = Status.Idle
+                },
+                label = { Text(stringResource(R.string.brain_custom_key)) },
+                leadingIcon = { Icon(Icons.Outlined.Key, contentDescription = null) },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                supportingText = {
+                    Text(
+                        stringResource(
+                            if (savedKey != null && BrainProviders.sameCustomServer(url, brain.customUrl)) {
+                                R.string.brain_custom_key_saved
+                            } else {
+                                R.string.brain_custom_key_hint
+                            },
+                        ),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = manualModel,
+                onValueChange = {
+                    manualModel = it
+                    if (status is Status.Failed) status = Status.Idle
+                },
+                label = { Text(stringResource(R.string.brain_ollama_model_label)) },
+                placeholder = { Text(stringResource(R.string.brain_ollama_model_placeholder)) },
+                leadingIcon = { Icon(Icons.Outlined.Memory, contentDescription = null) },
+                singleLine = true,
+                supportingText = { Text(stringResource(R.string.brain_ollama_model_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = { connect(url.trim().trimEnd('/'), key, manualModel.trim()) },
+                enabled = schemeOk && url.isNotBlank() && status != Status.Checking,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text(stringResource(R.string.brain_custom_connect))
+            }
+            if (customActive) {
+                Button(
+                    onClick = { disconnect() },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) {
+                    Text(stringResource(R.string.brain_custom_disconnect))
+                }
+            }
+            if (!schemeOk && url.isNotBlank()) {
+                Text(
+                    stringResource(R.string.brain_custom_bad_url),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Text(
+                text = stringResource(R.string.brain_custom_privacy),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -490,9 +769,15 @@ private fun BrainLocalTab(
                                                 "run there: ollama pull $model (or ollama list to see what is installed)",
                                             )
                                         } else {
-                                            say("на сервере установлены: ", "installed on the server: ") + installed.take(8).joinToString(", ")
+                                            say("на сервере установлены: ", "installed on the server: ") +
+                                                installed.take(8).joinToString(", ")
                                         }
-                                    throw BrainException(say("модель $model не отвечает на сервере: $hint", "model $model does not answer on the server: $hint"))
+                                    throw BrainException(
+                                        say(
+                                            "модель $model не отвечает на сервере: $hint",
+                                            "model $model does not answer on the server: $hint",
+                                        ),
+                                    )
                                 }
                                 throw e
                             }
@@ -553,36 +838,17 @@ private fun BrainLocalTab(
                 .navigationBarsPadding()
                 .padding(bottom = 24.dp),
     ) {
-        StatusCard(status = status, ready = ollamaActive && brain.model != null, active = ollama.takeIf { ollamaActive }, model = brain.model.takeIf { ollamaActive })
+        StatusCard(
+            status = status,
+            ready = ollamaActive && brain.model != null,
+            active =
+                ollama.takeIf {
+                    ollamaActive
+                },
+            model = brain.model.takeIf { ollamaActive },
+        )
 
-        SwitchItem(
-            icon = Icons.Outlined.Psychology,
-            title = R.string.brain_switch,
-            subtitle = R.string.brain_switch_hint,
-            checked = ollamaActive && brain.enabled,
-            enabled = ollamaActive,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEnabled(context, on) } },
-        )
-        SwitchItem(
-            icon = Icons.Outlined.AutoFixHigh,
-            title = R.string.brain_every_take,
-            subtitle = R.string.brain_every_take_hint,
-            checked = ollamaActive && brain.enabled && brain.everyTake,
-            enabled = ollamaActive && brain.enabled,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
-        )
-        if (ollamaActive && brain.enabled && brain.everyTake) {
-            EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
-            SwitchItem(
-                icon = Icons.Outlined.Bolt,
-                title = R.string.brain_skip_short,
-                subtitle = R.string.brain_skip_short_hint,
-                checked = brain.skipShort,
-                enabled = true,
-                onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
-            )
-        }
-        if (ollamaActive && brain.enabled) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+        BrainOptions(active = ollamaActive, brain = brain, onEditPrompt = onEditPrompt)
 
         if (ollamaActive && models.isNotEmpty()) {
             SectionTitle(R.string.brain_models)

@@ -14,7 +14,9 @@ import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AccessibilityNew
+import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.ContentPasteOff
@@ -26,9 +28,10 @@ import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.RadioButtonChecked
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shop
-import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.SwipeUp
 import androidx.compose.material.icons.outlined.TextFormat
+import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -51,11 +54,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
-import ru.gigapisar.R
-import ru.gigapisar.update.Updates
 import ru.gigapisar.BuildConfig
+import ru.gigapisar.R
 import ru.gigapisar.settings.AppLanguage
 import ru.gigapisar.settings.InsertionMode
+import ru.gigapisar.settings.KeyMode
+import ru.gigapisar.update.Updates
 
 private const val SITE_URL = "https://gigapisar.github.io"
 private const val SOURCE_URL = "https://github.com/moznoazachem/giga-pisar-android"
@@ -68,6 +72,8 @@ internal fun SettingsList(
     virtualButtonVisible: Boolean,
     volumeKeyEnabled: Boolean,
     sendKey: Boolean = false,
+    keyMode: KeyMode = KeyMode.ANY,
+    keyBrainShorten: Boolean = false,
     vibrationEnabled: Boolean,
     noClipboard: Boolean = false,
     simpleSyntax: Boolean = false,
@@ -82,6 +88,8 @@ internal fun SettingsList(
     onVirtualButton: (Boolean) -> Unit,
     onVolumeKey: (Boolean) -> Unit,
     onSendKey: (Boolean) -> Unit = {},
+    onKeyMode: (KeyMode) -> Unit = {},
+    onKeyBrainShorten: (Boolean) -> Unit = {},
     onVibration: (Boolean) -> Unit,
     onNoClipboard: (Boolean) -> Unit = {},
     onSimpleSyntax: (Boolean) -> Unit = {},
@@ -129,10 +137,24 @@ internal fun SettingsList(
             onChange = onVolumeKey,
         )
         if (volumeKeyEnabled && insertionMode == InsertionMode.TEXT_FIELD) {
+            RadioRow(
+                icon = Icons.Outlined.UnfoldMore,
+                title = R.string.key_mode_any,
+                subtitle = R.string.key_mode_any_hint,
+                selected = keyMode == KeyMode.ANY,
+                onClick = { onKeyMode(KeyMode.ANY) },
+            )
+            RadioRow(
+                icon = Icons.Outlined.AutoFixHigh,
+                title = R.string.key_mode_brain,
+                subtitle = R.string.key_mode_brain_hint,
+                selected = keyMode == KeyMode.BRAIN,
+                onClick = { onKeyMode(KeyMode.BRAIN) },
+            )
             SwitchRow(
                 icon = Icons.AutoMirrored.Outlined.Send,
                 title = R.string.send_key,
-                subtitle = R.string.send_key_hint,
+                subtitle = if (keyMode == KeyMode.BRAIN) R.string.send_key_hint_down else R.string.send_key_hint,
                 checked = sendKey,
                 onChange = onSendKey,
             )
