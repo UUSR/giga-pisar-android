@@ -175,7 +175,7 @@
     <string name="brain_custom_bad_url">The address must start with https:// and name a server, e.g. https://api.example.com/v1</string>
     <string name="brain_custom_privacy">The text goes to the server you named. The key is kept encrypted on this phone only.</string>
     <string name="brain_tab_local">Local server</string>
-    <string name="brain_ollama_hint">Ollama running on a computer in your network, e.g. https://192.168.1.10:11434</string>
+    <string name="brain_ollama_hint">Ollama address on a computer in your network, e.g. http://192.168.1.10:11434. Ollama must accept connections from the network</string>
     <string name="brain_ollama_placeholder">Server address</string>
     <string name="brain_ollama_connect">Check and connect</string>
     <string name="brain_ollama_model_label">Model (optional)</string>
@@ -184,8 +184,8 @@
     <string name="brain_ollama_no_models">Could not fetch the model list from the server, type the model name manually</string>
     <string name="brain_ollama_disconnect">Disconnect</string>
     <string name="brain_ollama_connected">Connected to %1$s</string>
-    <string name="brain_ollama_bad_url">The address must start with https://. Pisar does not use plain http: Google Play Protect treats such an app as harmful</string>
-    <string name="brain_ollama_privacy">The text goes to your computer, not to the internet. Over https only: Google Play Protect treats plain http as a sign of a harmful app and blocks the install.</string>
+    <string name="brain_ollama_bad_url">Enter the Ollama address with http:// or https://. Plain http is allowed only for local network addresses</string>
+    <string name="brain_ollama_privacy">Text is sent to your computer. Unencrypted http is allowed only for Ollama on your local network; do not expose the Ollama port to the internet.</string>
     <string name="brain_no_model">no suitable model found</string>
     <string name="brain_status_ok">Everything works</string>
     <string name="brain_status_ready">Ready</string>

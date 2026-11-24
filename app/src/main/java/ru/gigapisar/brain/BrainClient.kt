@@ -84,7 +84,7 @@ object BrainClient {
         provider: BrainProvider,
         key: String,
     ): List<String> {
-        val (status, body) = request("GET", "${provider.baseUrl}/models", key, null, 20_000)
+        val (status, body) = request("GET", "${provider.baseUrl}/models", key, null, 20_000, provider.local)
         if (status !in 200..299) throw BrainException(describeFailure(status, body, provider.local))
         val data = JSONObject(body).getJSONArray("data")
         return (0 until data.length()).mapNotNull { data.getJSONObject(it).optString("id").takeIf { id -> id.isNotBlank() } }
@@ -111,7 +111,7 @@ object BrainClient {
                 )
         if (withReasoning) payload.put("reasoning_effort", "none")
         if (temperature != null) payload.put("temperature", temperature)
-        return request("POST", "${provider.baseUrl}/chat/completions", key, payload.toString(), timeoutMs)
+        return request("POST", "${provider.baseUrl}/chat/completions", key, payload.toString(), timeoutMs, provider.local)
     }
 
     private fun request(
@@ -120,18 +120,19 @@ object BrainClient {
         key: String,
         body: String?,
         timeoutMs: Int,
+        local: Boolean,
     ): Pair<Int, String> {
         val address = URL(url)
-        // No plain http at all: an app that allows cleartext traffic gets flagged as harmful
-        // by Google Play Protect (0.2.13 was blocked on install), so the manifest does not
-        // allow it and the system would refuse the connection anyway.
-        if (address.protocol == "http") {
+        if (address.protocol == "http" && !allowsPlainHttp(local, address.host)) {
             throw BrainException(
                 say(
-                    "по http Писарь не ходит: Google Play Защита считает такое приложение опасным. Нужен адрес https://",
-                    "Pisar does not use plain http: Google Play Protect treats such an app as harmful. Use an https:// address",
+                    "по http можно подключаться только к Ollama в локальной сети",
+                    "plain http is only allowed for Ollama on a local network",
                 ),
             )
+        }
+        if (address.protocol != "http" && address.protocol != "https") {
+            throw BrainException(say("нужен адрес http:// или https://", "use an http:// or https:// address"))
         }
         val connection = address.openConnection() as HttpURLConnection
         try {
@@ -183,6 +184,11 @@ object BrainClient {
         } catch (_: Exception) {
             false
         }
+
+    internal fun allowsPlainHttp(
+        local: Boolean,
+        host: String,
+    ): Boolean = local && onHomeNetwork(host)
 
     private fun readContent(
         status: Int,

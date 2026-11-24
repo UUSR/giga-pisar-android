@@ -139,24 +139,11 @@ internal fun BrainScreen(
     var editing by rememberSaveable { mutableStateOf<Brain.Kind?>(null) }
     val ollamaActive = brain.providerId == BrainProviders.Ollama.id
     val customActive = brain.providerId == BrainProviders.Custom.id
-    // Whoever had a local server chosen in a test build: the Brain quietly goes off.
-    LaunchedEffect(ollamaActive) {
-        if (!LOCAL_SERVER_ENABLED && ollamaActive) {
-            SettingsRepository.setBrainEnabled(context, false)
-            SettingsRepository.setBrainService(context, null, null)
-        }
-    }
     editing?.let { kind ->
         BrainPromptEditor(kind = kind, custom = brain.prompts.of(kind), onClose = { editing = null })
         return
     }
-    val tabs =
-        if (LOCAL_SERVER_ENABLED) {
-            listOf(BrainTab.CLOUD, BrainTab.CUSTOM, BrainTab.LOCAL)
-        } else {
-            listOf(BrainTab.CLOUD, BrainTab.CUSTOM)
-        }
-    // A saved tab may be gone (the local one is hidden for now): fall back to the first.
+    val tabs = listOf(BrainTab.CLOUD, BrainTab.CUSTOM, BrainTab.LOCAL)
     val shown = tab.takeIf { it in tabs } ?: BrainTab.CLOUD
     Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
@@ -256,13 +243,6 @@ private fun BrainOptions(
     }
     if (active) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
 }
-
-/**
- * The "Local server" tab (Ollama over the home network, #32) is hidden for now: it needs
- * plain http, and an app that allows cleartext traffic gets flagged as harmful by Google
- * Play Protect (0.2.13 was blocked on install). The code stays until a way back is found.
- */
-private const val LOCAL_SERVER_ENABLED = false
 
 /** The server answered that it has no such model (see BrainClient.describeFailure). */
 private fun notInstalled(e: BrainException): Boolean = e.message?.contains("ollama pull") == true
@@ -873,7 +853,7 @@ private fun BrainLocalTab(
         }
 
         SectionTitle(R.string.brain_tab_local)
-        val schemeOk = url.startsWith("https://")
+        val schemeOk = url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
         Column(
             modifier = Modifier.padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),

@@ -77,6 +77,13 @@ class BrainTest {
     }
 
     @Test
+    fun plainHttpIsOnlyAllowedForLocalOllama() {
+        assertTrue(BrainClient.allowsPlainHttp(local = true, host = "192.168.1.10"))
+        assertFalse(BrainClient.allowsPlainHttp(local = false, host = "192.168.1.10"))
+        assertFalse(BrainClient.allowsPlainHttp(local = true, host = "8.8.8.8"))
+    }
+
+    @Test
     fun failureInPlainWords() {
         java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ru"))
         assertEquals("сервис не принял ключ", BrainClient.describeFailure(401, """{"error":{"message":"Invalid key"}}"""))

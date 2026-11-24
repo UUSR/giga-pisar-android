@@ -175,7 +175,7 @@
     <string name="brain_custom_bad_url">Адрес должен начинаться с https:// и содержать имя сервера, например https://api.example.com/v1</string>
     <string name="brain_custom_privacy">Текст уходит на указанный вами сервер. Ключ хранится зашифрованным только на этом телефоне.</string>
     <string name="brain_tab_local">Локальный сервер</string>
-    <string name="brain_ollama_hint">Ollama, запущенная на компьютере в вашей сети, например https://192.168.1.10:11434</string>
+    <string name="brain_ollama_hint">Адрес Ollama на компьютере в вашей сети, например http://192.168.1.10:11434. Ollama должна принимать подключения из сети</string>
     <string name="brain_ollama_placeholder">Адрес сервера</string>
     <string name="brain_ollama_connect">Проверить и подключить</string>
     <string name="brain_ollama_model_label">Модель (необязательно)</string>
@@ -184,8 +184,8 @@
     <string name="brain_ollama_no_models">Список моделей с сервера получить не удалось, введите название модели вручную</string>
     <string name="brain_ollama_disconnect">Отключить</string>
     <string name="brain_ollama_connected">Подключено к %1$s</string>
-    <string name="brain_ollama_bad_url">Адрес должен начинаться с https://. По http Писарь не ходит: Google Play Защита считает такое приложение опасным</string>
-    <string name="brain_ollama_privacy">Текст уходит на ваш компьютер, а не в интернет. Только по https: незашифрованный http Google Play Защита считает признаком вредоносного приложения и блокирует установку.</string>
+    <string name="brain_ollama_bad_url">Введите адрес Ollama с http:// или https://. По http разрешены только адреса локальной сети</string>
+    <string name="brain_ollama_privacy">Текст отправляется на ваш компьютер. Незашифрованный http разрешён только для Ollama в локальной сети; не открывайте порт Ollama в интернет.</string>
     <string name="brain_no_model">не нашлась подходящая модель</string>
     <string name="brain_status_ok">Всё работает</string>
     <string name="brain_status_ready">Готов к работе</string>
