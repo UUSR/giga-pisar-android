@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -42,6 +42,14 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.background
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
@@ -112,7 +120,11 @@ internal fun HiddenAppsScreen(
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
             }
-            Text(stringResource(R.string.fab_hidden_apps), style = MaterialTheme.typography.titleLarge)
+            Text(
+                stringResource(R.string.fab_hidden_apps),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
         }
         OutlinedTextField(
             value = query,
@@ -120,14 +132,21 @@ internal fun HiddenAppsScreen(
             placeholder = { Text(stringResource(R.string.fab_hidden_search)) },
             leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             singleLine = true,
-            shape = RoundedCornerShape(28.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors =
+                OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedBorderColor = Color.Transparent,
+                ),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
         )
         Text(
             stringResource(R.string.fab_hidden_hint),
-            style = MaterialTheme.typography.bodyMedium,
+            fontSize = 13.sp,
+            lineHeight = 17.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 32.dp, vertical = 10.dp),
         )
         val list = apps
         if (list == null) {
@@ -140,16 +159,32 @@ internal fun HiddenAppsScreen(
             list
                 .filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
                 .sortedBy { if (it.packageName in firstChosen) 0 else 1 }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-            items(shown, key = { it.packageName }) { app ->
+        // One white card of apps, as the settings groups are.
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+            modifier =
+                Modifier
+                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(MaterialTheme.colorScheme.surface),
+        ) {
+            itemsIndexed(shown, key = { _, app -> app.packageName }) { index, app ->
                 val checked = app.packageName in hidden
+                if (index > 0) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 18.dp),
+                        thickness = 1.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
                 ListItem(
                     headlineContent = { Text(app.label) },
                     leadingContent = {
-                        app.icon?.let { Image(it, contentDescription = null, modifier = Modifier.size(40.dp)) }
-                            ?: Box(modifier = Modifier.size(40.dp))
+                        app.icon?.let { Image(it, contentDescription = null, modifier = Modifier.size(36.dp)) }
+                            ?: Box(modifier = Modifier.size(36.dp))
                     },
                     trailingContent = { Checkbox(checked = checked, onCheckedChange = null) },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier =
                         Modifier.toggleable(value = checked, role = Role.Checkbox) { on ->
                             onChange(if (on) hidden + app.packageName else hidden - app.packageName)

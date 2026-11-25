@@ -1,11 +1,11 @@
 {
-  "version": "0.2.16",
-  "versionCode": 34,
-  "url": "https://github.com/moznoazachem/giga-pisar-android/releases/download/v0.2.16/GigaPisar.apk",
-  "sha256": "dc3e54e8cbd91a572b4acad9ce61a2d2746adbfa19047d9a722a3060f0a474aa",
-  "size": 58218632,
+  "version": "0.2.17",
+  "versionCode": 36,
+  "url": "https://github.com/moznoazachem/giga-pisar-android/releases/download/v0.2.17/GigaPisar.apk",
+  "sha256": "86aaa264e0b97c2827eccf55db729944668bec61ac799a6f9ae0d66730b65358",
+  "size": 58269572,
   "notes": {
-    "ru": "Два режима кнопок громкости: пишет любая или нижняя пишет, а верхняя правит Мозгом. Запись без удержания двойным нажатием. Свой сервер для Мозга. Отдельные выключатели на экране «Мозг». Пробел между диктовками. Громкость не перехватывается, пока телефон играет звук.",
-    "en": "Two volume key modes: either key records, or down records and up edits with the Brain. Hands-free recording by double press. Your own server for the Brain. Separate switches on the Brain screen. A space between dictations. Volume keys are left alone while the phone plays sound."
+    "ru": "Новое оформление настроек и новая плавающая кнопка. У каждой кнопки громкости теперь своя страница. Нижняя диктует, и для неё выбирается, каким текст встаёт в поле: как сказали, причёсанным, сокращённым или переведённым. Верхняя может тоже диктовать, причёсывать, сокращать, переводить или возвращать текст как сказали. Появился перевод на выбранный язык. Инструкции Мозга открываются прямо у каждого пункта. У новых установок отправка сообщения коротким нажатием включена сразу.",
+    "en": "New look of the settings and a new floating button. Each volume key now has its own page. Volume down dictates, and you choose what the text goes in as: as dictated, tidied up, shortened or translated. Volume up can record too, tidy up, shorten, translate or put the text back as dictated. Translation into a language of your choice. The Brain's instructions open right from each option. On new installations, sending a message with a short press is on from the start."
   }
 }
