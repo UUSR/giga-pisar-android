@@ -33,6 +33,8 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -63,7 +65,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.Box
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,8 +83,17 @@ import ru.gigapisar.brain.BrainProvider
 import ru.gigapisar.brain.BrainProviders
 import ru.gigapisar.brain.KeyVault
 import ru.gigapisar.brain.say
-import ru.gigapisar.settings.KeyMode
+import ru.gigapisar.settings.TakeEdit
 import ru.gigapisar.settings.SettingsRepository
+
+/** A service is connected: there is someone to send a dictation to. */
+internal fun brainReady(
+    context: Context,
+    brain: SettingsRepository.BrainSettings,
+): Boolean {
+    val provider = BrainProviders.endpoint(BrainProviders.byId(brain.providerId), brain.ollamaUrl, brain.customUrl)
+    return provider != null && brain.model != null && (provider.local || provider.custom || KeyVault.load(context, provider.id) != null)
+}
 
 /** The Brain row in the main settings list: its state at a glance, opens the Brain page. */
 @Composable
@@ -87,23 +103,19 @@ internal fun BrainRow(
 ) {
     val context = LocalContext.current
     val provider = BrainProviders.endpoint(BrainProviders.byId(brain.providerId), brain.ollamaUrl, brain.customUrl)
-    val ready = provider != null && brain.model != null && (provider.local || KeyVault.load(context, provider.id) != null)
-    SectionTitle(R.string.section_brain)
-    ListItem(
-        headlineContent = { Text(stringResource(R.string.brain_switch)) },
-        supportingContent = {
-            Text(
-                when {
-                    !ready -> stringResource(R.string.brain_row_none)
-                    brain.inUse -> stringResource(R.string.brain_row_on, provider!!.name, brain.model!!)
-                    else -> stringResource(R.string.brain_row_off, provider!!.name)
-                },
-                color = if (ready && brain.inUse) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-        leadingContent = { Icon(Icons.Outlined.Psychology, contentDescription = null) },
-        trailingContent = { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null) },
+    val ready = brainReady(context, brain)
+    OneRow(
+        title = stringResource(R.string.brain_switch),
+        subtitle =
+            when {
+                !ready -> stringResource(R.string.brain_row_none)
+                brain.inUse -> stringResource(R.string.brain_row_on, provider!!.name, brain.model!!)
+                else -> stringResource(R.string.brain_row_off, provider!!.name)
+            },
+        subtitleColor =
+            if (ready && brain.inUse) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.clickable(onClick = onOpen),
+        trailing = { OneChevron() },
     )
 }
 
@@ -131,6 +143,7 @@ private sealed interface Status {
 internal fun BrainScreen(
     brain: SettingsRepository.BrainSettings,
     onBack: () -> Unit,
+    onOpenKeys: () -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -153,9 +166,13 @@ internal fun BrainScreen(
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
             }
-            Text(stringResource(R.string.brain_switch), style = MaterialTheme.typography.titleLarge)
+            Text(
+                stringResource(R.string.brain_switch),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            )
         }
-        TabRow(selectedTabIndex = tabs.indexOf(shown)) {
+        TabRow(selectedTabIndex = tabs.indexOf(shown), containerColor = MaterialTheme.colorScheme.background) {
             for (t in tabs) {
                 Tab(
                     selected = shown == t,
@@ -175,9 +192,9 @@ internal fun BrainScreen(
             }
         }
         when (shown) {
-            BrainTab.CLOUD -> BrainCloudTab(brain = brain, onEditPrompt = { editing = it })
-            BrainTab.CUSTOM -> BrainCustomTab(brain = brain, customActive = customActive, onEditPrompt = { editing = it })
-            BrainTab.LOCAL -> BrainLocalTab(brain = brain, ollamaActive = ollamaActive, onEditPrompt = { editing = it })
+            BrainTab.CLOUD -> BrainCloudTab(brain = brain, onEditPrompt = { editing = it }, onOpenKeys = onOpenKeys)
+            BrainTab.CUSTOM -> BrainCustomTab(brain = brain, customActive = customActive, onEditPrompt = { editing = it }, onOpenKeys = onOpenKeys)
+            BrainTab.LOCAL -> BrainLocalTab(brain = brain, ollamaActive = ollamaActive, onEditPrompt = { editing = it }, onOpenKeys = onOpenKeys)
         }
     }
 }
@@ -193,55 +210,171 @@ private fun BrainOptions(
     active: Boolean,
     brain: SettingsRepository.BrainSettings,
     onEditPrompt: (Brain.Kind) -> Unit,
+    onOpenKeys: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    SwitchItem(
-        icon = Icons.Outlined.Psychology,
-        title = R.string.brain_commands,
-        subtitle = R.string.brain_switch_hint,
-        checked = active && brain.commands,
-        enabled = active,
-        onChange = { on -> scope.launch { SettingsRepository.setBrainCommands(context, on) } },
-    )
-    SwitchItem(
-        icon = Icons.Outlined.AutoFixHigh,
-        title = R.string.brain_every_take,
-        subtitle = R.string.brain_every_take_hint,
-        checked = active && brain.everyTake,
-        enabled = active,
-        onChange = { on -> scope.launch { SettingsRepository.setBrainEveryTake(context, on) } },
-    )
-    if (active && brain.everyTake) {
-        EveryTakeStyle(shorten = brain.shorten) { shorten -> scope.launch { SettingsRepository.setBrainShorten(context, shorten) } }
-        SwitchItem(
-            icon = Icons.Outlined.Bolt,
-            title = R.string.brain_skip_short,
-            subtitle = R.string.brain_skip_short_hint,
-            checked = brain.skipShort,
-            enabled = true,
-            onChange = { on -> scope.launch { SettingsRepository.setBrainSkipShort(context, on) } },
-        )
+    val rows = mutableListOf<@Composable () -> Unit>()
+
+    fun switch(
+        title: Int,
+        subtitle: Int,
+        checked: Boolean,
+        enabled: Boolean,
+        onChange: (Boolean) -> Unit,
+    ) {
+        rows += { SwitchItem(title = title, subtitle = subtitle, checked = checked, enabled = enabled, onChange = onChange) }
     }
-    SwitchItem(
-        icon = Icons.Outlined.Key,
-        title = R.string.brain_key_edit,
-        subtitle = R.string.brain_key_edit_hint,
-        checked = active && brain.keyEdit,
-        enabled = active,
-        onChange = { on -> scope.launch { SettingsRepository.setKeyMode(context, if (on) KeyMode.BRAIN else KeyMode.ANY) } },
-    )
-    if (active && brain.keyEdit) {
-        SwitchItem(
-            icon = Icons.Outlined.Bolt,
-            title = R.string.key_brain_shorten,
-            subtitle = R.string.key_brain_shorten_hint,
-            checked = brain.keyShorten,
-            enabled = true,
-            onChange = { on -> scope.launch { SettingsRepository.setKeyBrainShorten(context, on) } },
-        )
+    if (active) {
+        // The text opens the instructions the commands run by, the switch turns them on.
+        rows += {
+            SwitchAndOpenRow(
+                title = R.string.brain_commands,
+                subtitle = R.string.brain_switch_hint,
+                checked = brain.commands,
+                onChange = { on -> scope.launch { SettingsRepository.setBrainCommands(context, on) } },
+                onOpen = { onEditPrompt(Brain.Kind.COMMAND) },
+            )
+        }
+    } else {
+        switch(R.string.brain_commands, R.string.brain_switch_hint, false, false) { }
     }
-    if (active) BrainPromptRows(prompts = brain.prompts, onOpen = onEditPrompt)
+    SettingsGroup(rows = rows)
+
+    // What the Brain does with a dictation is chosen where the keys are set up.
+    SettingsGroup(
+        rows =
+            listOf<@Composable () -> Unit>({
+                OneRow(
+                    title = stringResource(R.string.brain_edit_in_keys),
+                    subtitle = stringResource(R.string.brain_edit_in_keys_hint),
+                    modifier = Modifier.clickable(onClick = onOpenKeys),
+                    trailing = { OneChevron() },
+                )
+            }),
+    )
+}
+
+/** A choice whose text opens a page (the chevron says so) and whose circle picks it. */
+@Composable
+internal fun ChoiceAndOpenRow(
+    title: String,
+    subtitle: String,
+    own: Boolean,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onOpen: () -> Unit,
+    enabled: Boolean = true,
+) {
+    // Waits for a connected service: shown, but faded.
+    Row(modifier = Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.45f), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .clickable(enabled = enabled, onClick = onOpen)
+                    .padding(start = 20.dp, end = 2.dp, top = 11.dp, bottom = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = title, fontSize = 17.sp, lineHeight = 22.sp, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    text = subtitle,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                if (own) {
+                    Text(
+                        text = stringResource(R.string.brain_prompt_own_note),
+                        fontSize = 13.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+            OneChevron()
+        }
+        Box(
+            modifier =
+                Modifier
+                    .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)
+                    .padding(start = 10.dp, end = 20.dp, top = 18.dp, bottom = 18.dp),
+        ) {
+            RadioButton(selected = selected, onClick = null)
+        }
+    }
+}
+
+/** The listed languages by the name they are stored and sent to the model under. */
+private val languageNames =
+    mapOf(
+        "English" to R.string.lang_english,
+        "Spanish" to R.string.lang_spanish,
+        "French" to R.string.lang_french,
+        "German" to R.string.lang_german,
+        "Chinese" to R.string.lang_chinese,
+    )
+
+/** The language to translate into: one row that names it and opens the list; any other is typed in there. */
+@Composable
+internal fun TranslateLanguageRow(
+    language: String,
+    onChange: (String) -> Unit,
+) {
+    var choosing by remember { mutableStateOf(false) }
+    val listed = languageNames[language]
+    OneRow(
+        title = stringResource(R.string.brain_translate_language),
+        subtitle = listed?.let { stringResource(it) } ?: language,
+        subtitleColor = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.clickable { choosing = true },
+        trailing = { OneChevron() },
+    )
+    if (!choosing) return
+    var own by remember { mutableStateOf(if (listed == null) language else "") }
+    AlertDialog(
+        onDismissRequest = { choosing = false },
+        title = { Text(stringResource(R.string.brain_translate_language)) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                for (stored in Brain.TRANSLATE_LANGUAGES) {
+                    val selected = own.isBlank() && language == stored
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .selectable(selected = selected, role = Role.RadioButton) {
+                                    onChange(stored)
+                                    choosing = false
+                                }.padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected, onClick = null)
+                        Text(text = stringResource(languageNames.getValue(stored)), fontSize = 17.sp, modifier = Modifier.padding(start = 14.dp))
+                    }
+                }
+                OutlinedTextField(
+                    value = own,
+                    onValueChange = { own = it.take(40) },
+                    label = { Text(stringResource(R.string.brain_translate_own)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    // An empty field means "leave it as it is", never "no language".
+                    own.trim().takeIf { it.isNotEmpty() }?.let(onChange)
+                    choosing = false
+                },
+            ) { Text(stringResource(R.string.brain_translate_done)) }
+        },
+    )
 }
 
 /** The server answered that it has no such model (see BrainClient.describeFailure). */
@@ -251,6 +384,7 @@ private fun notInstalled(e: BrainException): Boolean = e.message?.contains("olla
 private fun BrainCloudTab(
     brain: SettingsRepository.BrainSettings,
     onEditPrompt: (Brain.Kind) -> Unit,
+    onOpenKeys: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -310,6 +444,8 @@ private fun BrainCloudTab(
                     chosen = null
                 }
                 SettingsRepository.setBrainService(context, provider.id, picked)
+                // The first service connected turns voice commands on; later ones leave the switch alone.
+                SettingsRepository.setBrainEnabled(context, true)
                 status = Status.Ok(context.getString(R.string.brain_check_ok, provider.name, picked))
             } catch (e: BrainException) {
                 status = Status.Failed(e.message ?: "")
@@ -347,56 +483,76 @@ private fun BrainCloudTab(
     ) {
         StatusCard(status = status, ready = ready, active = active, model = brain.model)
 
-        BrainOptions(active = ready, brain = brain, onEditPrompt = onEditPrompt)
+        BrainOptions(active = ready, brain = brain, onEditPrompt = onEditPrompt, onOpenKeys = onOpenKeys)
 
         if (saved.isNotEmpty()) {
             SectionTitle(R.string.brain_services)
-            for (p in saved) {
-                ListItem(
-                    headlineContent = { Text(p.name) },
-                    supportingContent = {
-                        Text(brain.modelsByProvider[p.id] ?: stringResource(R.string.brain_key_saved))
-                    },
-                    leadingContent = { RadioButton(selected = p == active, onClick = null) },
-                    trailingContent = {
-                        IconButton(onClick = { forget(p) }) {
-                            Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.brain_forget))
+            SettingsGroup(
+                rows =
+                    saved.map { p ->
+                        {
+                            OneRow(
+                                title = p.name,
+                                subtitle = brain.modelsByProvider[p.id] ?: stringResource(R.string.brain_key_saved),
+                                subtitleColor =
+                                    if (p == active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier =
+                                    Modifier.selectable(selected = p == active, role = Role.RadioButton) {
+                                        if (p != active && status != Status.Checking) {
+                                            val key = KeyVault.load(context, p.id) ?: return@selectable
+                                            activate(p, key, brain.modelsByProvider[p.id], saveKey = false)
+                                        }
+                                    },
+                                trailing = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(selected = p == active, onClick = null)
+                                        IconButton(onClick = { forget(p) }) {
+                                            Icon(
+                                                Icons.Outlined.Delete,
+                                                contentDescription = stringResource(R.string.brain_forget),
+                                                tint = MaterialTheme.colorScheme.outline,
+                                            )
+                                        }
+                                    }
+                                },
+                            )
                         }
                     },
-                    modifier =
-                        Modifier.selectable(selected = p == active, role = Role.RadioButton) {
-                            if (p != active && status != Status.Checking) {
-                                val key = KeyVault.load(context, p.id) ?: return@selectable
-                                activate(p, key, brain.modelsByProvider[p.id], saveKey = false)
-                            }
-                        },
-                )
-            }
+            )
         }
 
         if (active != null && models.size > 1) {
             SectionTitle(R.string.brain_models)
-            for (m in models.take(30)) {
-                ListItem(
-                    headlineContent = { Text(m) },
-                    leadingContent = { Icon(Icons.Outlined.Memory, contentDescription = null) },
-                    trailingContent = { RadioButton(selected = m == brain.model, onClick = null) },
-                    modifier =
-                        Modifier.selectable(selected = m == brain.model, role = Role.RadioButton) {
-                            if (m != brain.model && status != Status.Checking) {
-                                val key = KeyVault.load(context, active.id) ?: return@selectable
-                                activate(active, key, m, saveKey = false)
-                            }
-                        },
-                )
-            }
+            SettingsGroup(
+                rows =
+                    models.take(30).map { m ->
+                        {
+                            OneRow(
+                                title = m,
+                                modifier =
+                                    Modifier.selectable(selected = m == brain.model, role = Role.RadioButton) {
+                                        if (m != brain.model && status != Status.Checking) {
+                                            val key = KeyVault.load(context, active.id) ?: return@selectable
+                                            activate(active, key, m, saveKey = false)
+                                        }
+                                    },
+                                trailing = { RadioButton(selected = m == brain.model, onClick = null) },
+                            )
+                        }
+                    },
+            )
         }
 
         SectionTitle(if (saved.isEmpty()) R.string.brain_key else R.string.brain_add_key)
         val guessed = BrainProviders.fromKey(newKey)
         val target = if (newKey.isNotBlank()) guessed ?: chosen else null
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier =
+                Modifier
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             OutlinedTextField(
@@ -468,6 +624,7 @@ private fun BrainCustomTab(
     brain: SettingsRepository.BrainSettings,
     customActive: Boolean,
     onEditPrompt: (Brain.Kind) -> Unit,
+    onOpenKeys: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -540,7 +697,7 @@ private fun BrainCustomTab(
                 }
                 SettingsRepository.setCustomUrl(context, address)
                 SettingsRepository.setBrainService(context, BrainProviders.Custom.id, picked)
-                if (!customActive) SettingsRepository.setBrainEveryTake(context, false)
+                if (!customActive) SettingsRepository.setLowerEdit(context, TakeEdit.NONE)
                 SettingsRepository.setBrainEnabled(context, true)
                 key = ""
                 status = Status.Ok(context.getString(R.string.brain_check_ok, server.name, picked))
@@ -579,27 +736,36 @@ private fun BrainCustomTab(
             model = brain.model.takeIf { customActive },
         )
 
-        BrainOptions(active = customActive, brain = brain, onEditPrompt = onEditPrompt)
+        BrainOptions(active = customActive, brain = brain, onEditPrompt = onEditPrompt, onOpenKeys = onOpenKeys)
 
         if (customActive && models.size > 1) {
             SectionTitle(R.string.brain_models)
-            for (m in models.take(30)) {
-                ListItem(
-                    headlineContent = { Text(m) },
-                    leadingContent = { Icon(Icons.Outlined.Memory, contentDescription = null) },
-                    trailingContent = { RadioButton(selected = m == brain.model, onClick = null) },
-                    modifier =
-                        Modifier.selectable(selected = m == brain.model, role = Role.RadioButton) {
-                            if (m != brain.model && status != Status.Checking) connect(brain.customUrl, "", m)
-                        },
-                )
-            }
+            SettingsGroup(
+                rows =
+                    models.take(30).map { m ->
+                        {
+                            OneRow(
+                                title = m,
+                                modifier =
+                                    Modifier.selectable(selected = m == brain.model, role = Role.RadioButton) {
+                                        if (m != brain.model && status != Status.Checking) connect(brain.customUrl, "", m)
+                                    },
+                                trailing = { RadioButton(selected = m == brain.model, onClick = null) },
+                            )
+                        }
+                    },
+            )
         }
 
         SectionTitle(R.string.brain_tab_custom)
         val schemeOk = url.trim().startsWith("https://")
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier =
+                Modifier
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             OutlinedTextField(
@@ -690,6 +856,7 @@ private fun BrainLocalTab(
     brain: SettingsRepository.BrainSettings,
     ollamaActive: Boolean,
     onEditPrompt: (Brain.Kind) -> Unit,
+    onOpenKeys: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -799,7 +966,7 @@ private fun BrainLocalTab(
                     }
                 SettingsRepository.setOllamaUrl(context, address)
                 SettingsRepository.setBrainService(context, ollama.id, picked)
-                if (!ollamaActive) SettingsRepository.setBrainEveryTake(context, false)
+                if (!ollamaActive) SettingsRepository.setLowerEdit(context, TakeEdit.NONE)
                 SettingsRepository.setBrainEnabled(context, true)
                 status = Status.Ok(context.getString(R.string.brain_ollama_connected, address))
             } catch (e: BrainException) {
@@ -828,21 +995,25 @@ private fun BrainLocalTab(
             model = brain.model.takeIf { ollamaActive },
         )
 
-        BrainOptions(active = ollamaActive, brain = brain, onEditPrompt = onEditPrompt)
+        BrainOptions(active = ollamaActive, brain = brain, onEditPrompt = onEditPrompt, onOpenKeys = onOpenKeys)
 
         if (ollamaActive && models.isNotEmpty()) {
             SectionTitle(R.string.brain_models)
-            for (m in models.take(30)) {
-                ListItem(
-                    headlineContent = { Text(m) },
-                    leadingContent = { Icon(Icons.Outlined.Memory, contentDescription = null) },
-                    trailingContent = { RadioButton(selected = m == brain.model, onClick = null) },
-                    modifier =
-                        Modifier.selectable(selected = m == brain.model, role = Role.RadioButton) {
-                            if (m != brain.model && status != Status.Checking) connect(url, m)
-                        },
-                )
-            }
+            SettingsGroup(
+                rows =
+                    models.take(30).map { m ->
+                        {
+                            OneRow(
+                                title = m,
+                                modifier =
+                                    Modifier.selectable(selected = m == brain.model, role = Role.RadioButton) {
+                                        if (m != brain.model && status != Status.Checking) connect(url, m)
+                                    },
+                                trailing = { RadioButton(selected = m == brain.model, onClick = null) },
+                            )
+                        }
+                    },
+            )
         } else if (ollamaActive && status is Status.Ok) {
             Text(
                 text = stringResource(R.string.brain_ollama_no_models),
@@ -855,7 +1026,12 @@ private fun BrainLocalTab(
         SectionTitle(R.string.brain_tab_local)
         val schemeOk = url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier =
+                Modifier
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             OutlinedTextField(
@@ -947,29 +1123,25 @@ private fun StatusCard(
                     )
                 }
         }
-    // Green only when something works; red on failure; neutral while there is nothing to say yet.
     val neutral = status == Status.Checking || (status == Status.Idle && !ready)
-    val container =
+    val container = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surface
+    val content = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
+    // Blue only when something works; red on failure; grey while there is nothing to say yet.
+    val mark =
         when {
-            error -> MaterialTheme.colorScheme.errorContainer
-            neutral -> MaterialTheme.colorScheme.surfaceContainerHigh
-            else -> MaterialTheme.colorScheme.primaryContainer
-        }
-    val content =
-        when {
-            error -> MaterialTheme.colorScheme.onErrorContainer
-            neutral -> MaterialTheme.colorScheme.onSurface
-            else -> MaterialTheme.colorScheme.onPrimaryContainer
+            error -> content
+            neutral -> MaterialTheme.colorScheme.outline
+            else -> MaterialTheme.colorScheme.primary
         }
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp),
+        shape = RoundedCornerShape(26.dp),
         colors = CardDefaults.cardColors(containerColor = container, contentColor = content),
     ) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (icon != null) {
-                    Icon(icon, contentDescription = null)
+                    Icon(icon, contentDescription = null, tint = mark)
                 } else {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = content)
                 }
@@ -988,40 +1160,23 @@ private data class Quad(
 )
 
 @Composable
-private fun SwitchItem(
-    icon: ImageVector,
+internal fun SwitchItem(
     title: Int,
     subtitle: Int,
     checked: Boolean,
     enabled: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
-    ListItem(
-        headlineContent = { Text(stringResource(title)) },
-        supportingContent = { Text(stringResource(subtitle)) },
-        leadingContent = { Icon(icon, contentDescription = null) },
-        trailingContent = { Switch(checked = checked, onCheckedChange = null, enabled = enabled) },
-        modifier = Modifier.toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange),
+    OneRow(
+        title = stringResource(title),
+        subtitle = stringResource(subtitle),
+        modifier =
+            Modifier
+                .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+                // Waits for a connected service: shown, but faded.
+                .alpha(if (enabled) 1f else 0.45f),
+        trailing = { OneSwitch(checked) },
     )
-}
-
-/** What "edit on the fly" does with a take: tidies it up or makes a short message of it. */
-@Composable
-private fun EveryTakeStyle(
-    shorten: Boolean,
-    onPick: (Boolean) -> Unit,
-) {
-    for ((value, title, hint) in listOf(
-        Triple(false, R.string.brain_style_tidy, R.string.brain_style_tidy_hint),
-        Triple(true, R.string.brain_style_short, R.string.brain_style_short_hint),
-    )) {
-        ListItem(
-            headlineContent = { Text(stringResource(title)) },
-            supportingContent = { Text(stringResource(hint)) },
-            leadingContent = { RadioButton(selected = shorten == value, onClick = null) },
-            modifier = Modifier.selectable(selected = shorten == value, role = Role.RadioButton) { onPick(value) },
-        )
-    }
 }
 
 private fun openUrl(

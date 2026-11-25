@@ -1,7 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="6 6 96 96">
-  <rect x="0" y="0" width="108" height="108" fill="#102A24"/>
-  <rect x="31" y="42" width="10" height="24" fill="#62C957"/>
-  <rect x="44" y="30" width="10" height="48" fill="#35B85F"/>
-  <rect x="57" y="21" width="10" height="66" fill="#16A77A"/>
-  <rect x="70" y="36" width="10" height="36" fill="#008F92"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="15 15 78 78"><defs><linearGradient id="b" gradientUnits="userSpaceOnUse" x1="32" y1="28" x2="76" y2="80"><stop offset="0" stop-color="#4FCBEA"/><stop offset="1" stop-color="#0B6FA8"/></linearGradient><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E6F3FB"/></linearGradient></defs><rect x="0" y="0" width="108" height="108" fill="url(#bg)"/><path d="M34.8,49.4L34.8,58.6" stroke="url(#b)" stroke-width="6.2" stroke-linecap="round" fill="none"/><path d="M44.4,42.2L44.4,65.8" stroke="url(#b)" stroke-width="6.2" stroke-linecap="round" fill="none"/><path d="M54.0,33.1L54.0,74.9" stroke="url(#b)" stroke-width="6.2" stroke-linecap="round" fill="none"/><path d="M63.6,39.4L63.6,68.7" stroke="url(#b)" stroke-width="6.2" stroke-linecap="round" fill="none"/><path d="M73.2,47.0L73.2,61.0" stroke="url(#b)" stroke-width="6.2" stroke-linecap="round" fill="none"/></svg>

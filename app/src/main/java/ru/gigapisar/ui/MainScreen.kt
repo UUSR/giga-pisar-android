@@ -4,6 +4,11 @@ import android.Manifest
 import android.content.Intent
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.Icons
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -36,7 +41,7 @@ import kotlinx.coroutines.launch
 import ru.gigapisar.R
 import ru.gigapisar.model.ModelManager
 import ru.gigapisar.settings.InsertionMode
-import ru.gigapisar.settings.KeyMode
+import ru.gigapisar.brain.Brain
 import ru.gigapisar.settings.SettingsRepository
 
 @Composable
@@ -46,10 +51,13 @@ fun MainScreen(activity: ComponentActivity) {
     var virtualButtonVisible by remember { mutableStateOf(true) }
     var volumeKeyEnabled by remember { mutableStateOf(true) }
     var sendKey by remember { mutableStateOf(false) }
-    var keyMode by remember { mutableStateOf(KeyMode.ANY) }
-    var keyBrainShorten by remember { mutableStateOf(false) }
+    // The page a key's page was opened from, to go back to; and the instructions being read.
+    var keyPageFrom by remember { mutableStateOf(SettingsPage.KEYS) }
+    var editingPrompt by remember { mutableStateOf<Brain.Kind?>(null) }
     var vibrationEnabled by remember { mutableStateOf(true) }
     var fabGestures by remember { mutableStateOf(true) }
+    var fabEdgeHandle by remember { mutableStateOf(false) }
+    var settingsPage by remember { mutableStateOf(SettingsPage.MAIN) }
     var noClipboard by remember { mutableStateOf(false) }
     var simpleSyntax by remember { mutableStateOf(false) }
     var dropHesitations by remember { mutableStateOf(true) }
@@ -90,19 +98,17 @@ fun MainScreen(activity: ComponentActivity) {
         SettingsRepository.volumeKeyEnabled(context).collect { volumeKeyEnabled = it }
     }
     LaunchedEffect(context) {
+        SettingsRepository.decideSendKey(context)
         SettingsRepository.sendKey(context).collect { sendKey = it }
-    }
-    LaunchedEffect(context) {
-        SettingsRepository.keyMode(context).collect { keyMode = it }
-    }
-    LaunchedEffect(context) {
-        SettingsRepository.keyBrainShorten(context).collect { keyBrainShorten = it }
     }
     LaunchedEffect(context) {
         SettingsRepository.vibrationEnabled(context).collect { vibrationEnabled = it }
     }
     LaunchedEffect(context) {
         SettingsRepository.fabGestures(context).collect { fabGestures = it }
+    }
+    LaunchedEffect(context) {
+        SettingsRepository.fabEdgeHandle(context).collect { fabEdgeHandle = it }
     }
     LaunchedEffect(context) {
         SettingsRepository.noClipboard(context).collect { noClipboard = it }
@@ -148,9 +154,16 @@ fun MainScreen(activity: ComponentActivity) {
                 onDecline = { accessibilityDisclosure = false },
             )
         }
-        Surface(modifier = Modifier.fillMaxSize()) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             if (page == Page.BRAIN) {
-                BrainScreen(brain = brain, onBack = { page = Page.MAIN })
+                BrainScreen(
+                    brain = brain,
+                    onBack = { page = Page.MAIN },
+                    onOpenKeys = {
+                        settingsPage = SettingsPage.KEYS
+                        page = Page.MAIN
+                    },
+                )
                 return@Surface
             }
             if (page == Page.HIDDEN_APPS) {
@@ -159,6 +172,111 @@ fun MainScreen(activity: ComponentActivity) {
                     onChange = { apps -> scope.launch { SettingsRepository.setFabHiddenApps(context, apps) } },
                     onBack = { page = Page.MAIN },
                 )
+                return@Surface
+            }
+            editingPrompt?.let { kind ->
+                BrainPromptEditor(kind = kind, custom = brain.prompts.of(kind), onClose = { editingPrompt = null })
+                return@Surface
+            }
+            val brainConnected = brainReady(context, brain)
+            val textField = insertionMode == InsertionMode.TEXT_FIELD
+            val settings: @Composable (SettingsPage) -> Unit = { shown ->
+                when (shown) {
+                    SettingsPage.KEY_DOWN ->
+                        LowerKeyPage(
+                            brain = brain,
+                            sendKey = sendKey,
+                            textField = textField,
+                            keyEnabled = volumeKeyEnabled,
+                            onSendKey = { scope.launch { SettingsRepository.setSendKey(context, it) } },
+                            onEditPrompt = { editingPrompt = it },
+                            onOpenBrain = { page = Page.BRAIN },
+                        )
+
+                    SettingsPage.KEY_UP ->
+                        UpperKeyPage(brain = brain, onEditPrompt = { editingPrompt = it }, onOpenBrain = { page = Page.BRAIN })
+
+                    else -> Unit
+                }
+                SettingsList(
+                    insertionMode = insertionMode,
+                    virtualButtonVisible = virtualButtonVisible,
+                    volumeKeyEnabled = volumeKeyEnabled,
+                    vibrationEnabled = vibrationEnabled,
+                    microphoneGranted = microphoneGranted,
+                    accessibilityEnabled = accessibilityEnabled,
+                    onInsertionMode = { scope.launch { SettingsRepository.setInsertionMode(context, it) } },
+                    onVirtualButton = { scope.launch { SettingsRepository.setVirtualButtonVisible(context, it) } },
+                    onVolumeKey = { scope.launch { SettingsRepository.setVolumeKeyEnabled(context, it) } },
+                    lowerSummary = lowerKeySummary(brain, brainConnected, sendKey && textField && volumeKeyEnabled),
+                    upperSummary = upperKeySummary(brain, brainConnected),
+                    onVibration = { scope.launch { SettingsRepository.setVibrationEnabled(context, it) } },
+                    noClipboard = noClipboard,
+                    onNoClipboard = { scope.launch { SettingsRepository.setNoClipboard(context, it) } },
+                    simpleSyntax = simpleSyntax,
+                    onSimpleSyntax = { scope.launch { SettingsRepository.setSimpleSyntax(context, it) } },
+                    dropHesitations = dropHesitations,
+                    onDropHesitations = { scope.launch { SettingsRepository.setDropHesitations(context, it) } },
+                    noFinalPeriod = noFinalPeriod,
+                    onNoFinalPeriod = { scope.launch { SettingsRepository.setNoFinalPeriod(context, it) } },
+                    fabScale = fabScale,
+                    onFabScale = { scope.launch { SettingsRepository.setFabScale(context, it) } },
+                    fabGestures = fabGestures,
+                    onFabGestures = { scope.launch { SettingsRepository.setFabGestures(context, it) } },
+                    fabEdgeHandle = fabEdgeHandle,
+                    onFabEdgeHandle = { scope.launch { SettingsRepository.setFabEdgeHandle(context, it) } },
+                    hiddenAppNames = hiddenAppNames,
+                    onOpenHiddenApps = { page = Page.HIDDEN_APPS },
+                    onRequestMicrophone = requestMicrophone,
+                    onOpenAccessibilitySettings = openAccessibilitySettings,
+                    brainSection = { BrainRow(brain = brain, onOpen = { page = Page.BRAIN }) },
+                    onLanguageChanged = { activity.recreate() },
+                    page = shown,
+                    onOpen = {
+                        if (it == SettingsPage.KEY_DOWN || it == SettingsPage.KEY_UP) keyPageFrom = settingsPage
+                        settingsPage = it
+                    },
+                )
+            }
+            if (settingsPage != SettingsPage.MAIN) {
+                // A page opened from the short list: its name, a way back, and its rows.
+                val isKeyPage = settingsPage == SettingsPage.KEY_DOWN || settingsPage == SettingsPage.KEY_UP
+                val goBack = { settingsPage = if (isKeyPage) keyPageFrom else SettingsPage.MAIN }
+                BackHandler(onBack = goBack)
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .verticalScroll(rememberScrollState())
+                            .navigationBarsPadding()
+                            .padding(bottom = 24.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
+                    ) {
+                        IconButton(onClick = goBack) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                        }
+                        Text(
+                            stringResource(
+                                when (settingsPage) {
+                                    SettingsPage.BUTTON -> R.string.floating_button
+                                    SettingsPage.KEYS -> R.string.volume_key
+                                    SettingsPage.KEY_DOWN ->
+                                        if (keyPageFrom == SettingsPage.BUTTON) R.string.take_text_title else R.string.key_down_title
+                                    SettingsPage.KEY_UP -> R.string.key_up_title
+                                    SettingsPage.TEXT -> R.string.settings_text
+                                    else -> R.string.section_about
+                                },
+                            ),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        )
+                    }
+                    settings(settingsPage)
+                }
                 return@Surface
             }
             Column(
@@ -189,46 +307,12 @@ fun MainScreen(activity: ComponentActivity) {
                 UpdateBanner(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp))
                 AskNotificationsOnce()
                 ReadyCard(
+                    sendKey = sendKey && insertionMode == InsertionMode.TEXT_FIELD,
                     volumeKeyEnabled = volumeKeyEnabled,
                     buttonEnabled = virtualButtonVisible,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp),
                 )
-                SettingsList(
-                    insertionMode = insertionMode,
-                    virtualButtonVisible = virtualButtonVisible,
-                    volumeKeyEnabled = volumeKeyEnabled,
-                    vibrationEnabled = vibrationEnabled,
-                    microphoneGranted = microphoneGranted,
-                    accessibilityEnabled = accessibilityEnabled,
-                    onInsertionMode = { scope.launch { SettingsRepository.setInsertionMode(context, it) } },
-                    onVirtualButton = { scope.launch { SettingsRepository.setVirtualButtonVisible(context, it) } },
-                    onVolumeKey = { scope.launch { SettingsRepository.setVolumeKeyEnabled(context, it) } },
-                    sendKey = sendKey,
-                    onSendKey = { scope.launch { SettingsRepository.setSendKey(context, it) } },
-                    keyMode = keyMode,
-                    onKeyMode = { scope.launch { SettingsRepository.setKeyMode(context, it) } },
-                    keyBrainShorten = keyBrainShorten,
-                    onKeyBrainShorten = { scope.launch { SettingsRepository.setKeyBrainShorten(context, it) } },
-                    onVibration = { scope.launch { SettingsRepository.setVibrationEnabled(context, it) } },
-                    noClipboard = noClipboard,
-                    onNoClipboard = { scope.launch { SettingsRepository.setNoClipboard(context, it) } },
-                    simpleSyntax = simpleSyntax,
-                    onSimpleSyntax = { scope.launch { SettingsRepository.setSimpleSyntax(context, it) } },
-                    dropHesitations = dropHesitations,
-                    onDropHesitations = { scope.launch { SettingsRepository.setDropHesitations(context, it) } },
-                    noFinalPeriod = noFinalPeriod,
-                    onNoFinalPeriod = { scope.launch { SettingsRepository.setNoFinalPeriod(context, it) } },
-                    fabScale = fabScale,
-                    onFabScale = { scope.launch { SettingsRepository.setFabScale(context, it) } },
-                    fabGestures = fabGestures,
-                    onFabGestures = { scope.launch { SettingsRepository.setFabGestures(context, it) } },
-                    hiddenAppNames = hiddenAppNames,
-                    onOpenHiddenApps = { page = Page.HIDDEN_APPS },
-                    onRequestMicrophone = requestMicrophone,
-                    onOpenAccessibilitySettings = openAccessibilitySettings,
-                    brainSection = { BrainRow(brain = brain, onOpen = { page = Page.BRAIN }) },
-                    onLanguageChanged = { activity.recreate() },
-                )
+                settings(SettingsPage.MAIN)
             }
         }
     }
@@ -253,7 +337,8 @@ private fun Header() {
     ) {
         Text(
             text = stringResource(R.string.app_name),
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
             modifier = Modifier.alignByBaseline(),
         )
         version?.let {

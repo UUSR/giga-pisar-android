@@ -8,41 +8,42 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
-import ru.gigapisar.R
-import ru.gigapisar.settings.AppLanguage
 import kotlin.math.sin
 
 /**
- * The strip that slides out from the floating button while it records, as in messengers:
- * a red dot, the time, and "‹ ‹ Cancel" pointing to where a slide throws the recording away.
- * Its square end touches the button, which draws the rest of the strip under itself.
+ * The hint next to the floating button while it records: arrows leading away from the button
+ * to a bin, where a slide throws the recording away. No plate under it: the arrows and the bin
+ * are drawn in the button's blue with a light halo, so they read on any background.
  */
 class RecordingBar(
     context: Context,
 ) : View(context) {
     companion object {
         const val HEIGHT_DP = 48
-        /** Room around the strip for its shadow. */
+
+        /** Room around the drawing for its halo. */
         const val SHADOW_DP = 4
+        private const val BIN_BOX_DP = 44
+        private const val ARROW_STEP_DP = 13
     }
 
     private val density = resources.displayMetrics.density
 
-    /** -1: the strip is left of the button (its square end on the right), +1: right of it. */
+    /** -1: the hint is left of the button (the bin at its left end), +1: right of it. */
     var side = -1
         set(value) {
             field = value
             invalidate()
         }
 
-    /** Hands-free: the hint stops moving and a tap on it cancels. */
+    /** Hands-free: the arrows stop moving and a tap on the bin cancels. */
     var handsFree = false
         set(value) {
             field = value
             invalidate()
         }
 
-    /** How far the finger went toward "cancel", 0..1. */
+    /** How far the finger went toward the bin, 0..1. */
     var cancelProgress = 0f
         set(value) {
             field = value.coerceIn(0f, 1f)
@@ -53,21 +54,26 @@ class RecordingBar(
 
     private var startedAt = SystemClock.uptimeMillis()
 
-    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x22000000 }
-    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFE53935.toInt() }
-    private val timePaint =
+    private val halo = 0xF2FFFFFF.toInt()
+    private val arrowPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF1A1C19.toInt()
-            textSize = 15 * density
+            color = 0xFF1FA3D6.toInt()
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            strokeWidth = 2.6f * density
+            setShadowLayer(2.5f * density, 0f, 0f, halo)
         }
-    private val hintPaint =
+    private val binPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF7B8276.toInt()
-            textSize = 14 * density
+            color = 0xFF0B6FA8.toInt()
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            setShadowLayer(2.5f * density, 0f, 0f, halo)
         }
 
-    private var hintRect = RectF()
+    private var binRect = RectF()
 
     private val frame =
         object : Runnable {
@@ -81,6 +87,8 @@ class RecordingBar(
     init {
         setBackgroundColor(Color.TRANSPARENT)
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        // Shadow layers under shapes need a software layer on older systems.
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
 
     fun restart() {
@@ -98,67 +106,61 @@ class RecordingBar(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val pad = SHADOW_DP * density
-        val top = pad
-        val bottom = height - pad
-        val h = bottom - top
-        val radius = h / 2f
         val w = width.toFloat()
+        val cy = height / 2f
+        val box = BIN_BOX_DP * density
+        // The bin sits at the far end, the arrows run from the button toward it.
+        val binX = if (side < 0) box / 2f else w - box / 2f
+        binRect = RectF(binX - box / 2f, 0f, binX + box / 2f, height.toFloat())
+        drawBin(canvas, binX, cy, 1f + 0.3f * cancelProgress)
 
-        // Rounded at the far end, square where it meets the button.
-        fun strip(paint: Paint, dy: Float) {
-            canvas.drawRoundRect(RectF(pad, top + dy, w - pad, bottom + dy), radius, radius, paint)
-            if (side < 0) {
-                canvas.drawRect(w - radius - pad, top + dy, w, bottom + dy, paint)
-            } else {
-                canvas.drawRect(0f, top + dy, pad + radius, bottom + dy, paint)
-            }
-        }
-        strip(shadowPaint, 1.5f * density)
-        strip(barPaint, 0f)
-
-        val cy = (top + bottom) / 2f
         val t = SystemClock.uptimeMillis() - startedAt
-        val seconds = t / 1000
-        val time = "%d:%02d".format(seconds / 60, seconds % 60)
-        val textY = cy - (timePaint.descent() + timePaint.ascent()) / 2
-
-        // Dot and time at the far end, the hint after them, toward the button.
-        val dotR = 4.5f * density
-        dotPaint.alpha = (150 + 105 * (0.5f + 0.5f * sin(t / 1000f * Math.PI.toFloat() * 2))).toInt()
-        val farEdge = if (side < 0) pad + 16 * density else w - pad - 16 * density
-        val dotX = if (side < 0) farEdge + dotR else farEdge - dotR
-        canvas.drawCircle(dotX, cy, dotR, dotPaint)
-        val timeWidth = timePaint.measureText(time)
-        val timeX = if (side < 0) dotX + dotR + 8 * density else dotX - dotR - 8 * density - timeWidth
-        canvas.drawText(time, timeX, textY, timePaint)
-
-        val word = AppLanguage.wrap(context.applicationContext).getString(R.string.bar_cancel)
-        val hint = if (side < 0) "‹ ‹  $word" else "$word  › ›"
-        val hintWidth = hintPaint.measureText(hint)
-        val gap = 14 * density
-        val shift = if (handsFree) 0f else cancelProgress * 40 * density
-        val hintX =
-            if (side < 0) timeX + timeWidth + gap - shift else timeX - gap - hintWidth + shift
-        hintPaint.alpha = (255 * (1f - cancelProgress)).toInt().coerceIn(0, 255)
-        // The hint slides toward "cancel" but never over the time.
-        canvas.save()
-        if (side < 0) {
-            canvas.clipRect(timeX + timeWidth + 6 * density, 0f, w, height.toFloat())
-        } else {
-            canvas.clipRect(0f, 0f, timeX - 6 * density, height.toFloat())
+        val step = ARROW_STEP_DP * density
+        val a = 6.5f * density
+        val nearEnd = if (side < 0) w - 10 * density else 10 * density
+        val limit = if (side < 0) binX + box / 2f else binX - box / 2f
+        var i = 0
+        while (true) {
+            val x = nearEnd + side * i * step
+            if (if (side < 0) x - a < limit else x + a > limit) break
+            // Brightest at the button, fading toward the bin; a slow ripple runs along them.
+            val base = (0.95f - 0.2f * i).coerceAtLeast(0.2f)
+            val ripple = if (handsFree) 0f else 0.15f * sin(t / 1000f * 2f * Math.PI.toFloat() - i * 0.9f)
+            arrowPaint.alpha = (255 * (base + ripple + 0.3f * cancelProgress).coerceIn(0.15f, 1f)).toInt()
+            // A chevron pointing at the bin.
+            canvas.drawLine(x - side * a * 0.5f, cy - a, x + side * a * 0.5f, cy, arrowPaint)
+            canvas.drawLine(x + side * a * 0.5f, cy, x - side * a * 0.5f, cy + a, arrowPaint)
+            i++
         }
-        canvas.drawText(hint, hintX, textY, hintPaint)
-        canvas.restore()
-        hintRect = RectF(hintX - gap, top, hintX + hintWidth + gap, bottom)
+    }
+
+    private fun drawBin(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        scale: Float,
+    ) {
+        val d = density * scale
+        binPaint.strokeWidth = 2.2f * d
+        // Lid, handle, body, two ribs.
+        canvas.drawLine(cx - 9 * d, cy - 6 * d, cx + 9 * d, cy - 6 * d, binPaint)
+        canvas.drawLine(cx - 3.5f * d, cy - 6 * d, cx - 3.5f * d, cy - 9.5f * d, binPaint)
+        canvas.drawLine(cx - 3.5f * d, cy - 9.5f * d, cx + 3.5f * d, cy - 9.5f * d, binPaint)
+        canvas.drawLine(cx + 3.5f * d, cy - 9.5f * d, cx + 3.5f * d, cy - 6 * d, binPaint)
+        canvas.drawLine(cx - 6.5f * d, cy - 6 * d, cx - 5.5f * d, cy + 10 * d, binPaint)
+        canvas.drawLine(cx - 5.5f * d, cy + 10 * d, cx + 5.5f * d, cy + 10 * d, binPaint)
+        canvas.drawLine(cx + 5.5f * d, cy + 10 * d, cx + 6.5f * d, cy - 6 * d, binPaint)
+        binPaint.strokeWidth = 1.8f * d
+        canvas.drawLine(cx - 2.2f * d, cy - 1.5f * d, cx - 2.2f * d, cy + 5.5f * d, binPaint)
+        canvas.drawLine(cx + 2.2f * d, cy - 1.5f * d, cx + 2.2f * d, cy + 5.5f * d, binPaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!handsFree) return false
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> return hintRect.contains(event.x, event.y)
+            MotionEvent.ACTION_DOWN -> return binRect.contains(event.x, event.y)
             MotionEvent.ACTION_UP -> {
-                if (hintRect.contains(event.x, event.y)) onCancel?.invoke()
+                if (binRect.contains(event.x, event.y)) onCancel?.invoke()
                 return true
             }
         }
