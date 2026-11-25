@@ -12,8 +12,8 @@ for L in ru-RU en-US; do
   for t in icon featureGraphic phoneScreenshots; do curl -s -X DELETE -H "Authorization: Bearer $T" "$API/edits/${ID}/listings/$L/$t" -o /dev/null; done
   up() { curl -sf -X POST -H "Authorization: Bearer $T" -H "Content-Type: image/png" --data-binary @$2 "$UP/edits/${ID}/listings/$L/$1?uploadType=media" -o /dev/null; }
   up icon play/listing/icon.png
-  up featureGraphic play/listing/feature.png
-  for s in play/listing/screen-*.png; do up phoneScreenshots $s; done
+  up featureGraphic play/listing/$L/feature.png
+  for s in play/listing/$L/screen-*.png; do up phoneScreenshots $s; done
   echo "listing $L ready"
 done
 curl -s -X POST -H "Authorization: Bearer $T" "${API}/edits/${ID}:commit"

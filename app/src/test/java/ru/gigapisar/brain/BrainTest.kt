@@ -117,6 +117,19 @@ class BrainTest {
     }
 
     @Test
+    fun translationNamesTheLanguageAfterTheRules() {
+        val prompt = Brain.translatePrompt("Turkish")
+        assertTrue(prompt.startsWith(Brain.TRANSLATE.head))
+        assertTrue(Brain.TRANSLATE.tail in prompt)
+        assertTrue(prompt.trimEnd().endsWith("Translate the dictation into this language: Turkish. The whole answer is in that language."))
+        // A rewritten body keeps the locked rules and still gets the language.
+        val own = Brain.translatePrompt("Turkish", "Переводи дословно.")
+        assertTrue("Переводи дословно." in own)
+        assertFalse(Brain.TRANSLATE.body in own)
+        assertTrue("Turkish" in own)
+    }
+
+    @Test
     fun lengthTargetIsAFifthOfTheTake() {
         val take = (1..200).joinToString(" ") { "слово" }
         assertTrue("около 40 слов" in Brain.lengthTarget(take))

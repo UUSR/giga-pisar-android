@@ -51,7 +51,8 @@ import ru.gigapisar.overlay.OverlayManager
 import ru.gigapisar.overlay.RecordingPill
 import ru.gigapisar.settings.AppLanguage
 import ru.gigapisar.settings.InsertionMode
-import ru.gigapisar.settings.KeyMode
+import ru.gigapisar.settings.TakeEdit
+import ru.gigapisar.settings.UpperKey
 import ru.gigapisar.settings.SettingsRepository
 import ru.gigapisar.speech.GigaAmOnnxRecognizer
 import ru.gigapisar.text.Hesitations
@@ -136,9 +137,6 @@ class GigaPisarAccessibilityService : AccessibilityService() {
 
     /** A short press that waits to see whether a second one follows. */
     private var volumeKeyPendingTap: Runnable? = null
-
-    private var keyMode = KeyMode.ANY
-    private var keyBrainShorten = false
 
     /** A short press sends only for a short while after a dictation went into a field of this app. */
     private var sendArmedUntil = 0L
@@ -248,9 +246,11 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                     fabPreviewing = true
                     overlay.setScale(scale)
                     updateButtonVisibility()
+                    overlay.previewing = true
                 } else if (fabPreviewing) {
                     delay(FAB_PREVIEW_LINGER_MS)
                     fabPreviewing = false
+                    overlay.previewing = false
                     overlay.setScale(fabScale)
                     updateButtonVisibility()
                 }
@@ -273,21 +273,10 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         }
 
         serviceScope.launch {
+            SettingsRepository.decideSendKey(this@GigaPisarAccessibilityService)
             SettingsRepository
                 .sendKey(this@GigaPisarAccessibilityService)
                 .collectLatest { enabled -> sendKeyEnabled = enabled }
-        }
-
-        serviceScope.launch {
-            SettingsRepository
-                .keyMode(this@GigaPisarAccessibilityService)
-                .collectLatest { mode -> keyMode = mode }
-        }
-
-        serviceScope.launch {
-            SettingsRepository
-                .keyBrainShorten(this@GigaPisarAccessibilityService)
-                .collectLatest { shorten -> keyBrainShorten = shorten }
         }
 
         serviceScope.launch {
@@ -324,6 +313,20 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                     fabGestures = enabled
                     overlay.gestures = enabled
                 }
+        }
+
+        serviceScope.launch {
+            SettingsRepository
+                .fabEdgeHandle(this@GigaPisarAccessibilityService)
+                .collectLatest { enabled -> overlay.edgeHandle = enabled }
+        }
+
+        // The button thrown into a screen edge, or pulled back out of it: the switch follows.
+        overlay.onTick = ::buzz
+        overlay.onTuckedChange = { tucked ->
+            serviceScope.launch {
+                SettingsRepository.setFabEdgeHandle(this@GigaPisarAccessibilityService, tucked)
+            }
         }
 
         serviceScope.launch {
@@ -383,12 +386,12 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         // Recording by key may be off in settings: then a key is taken only for its short press.
         val records = volumeKeyEnabled && recordsWith(key)
         val tap = tapAction(key)
-        // Volume up in the Brain mode never records, and a hold of it does nothing at all: a
-        // finger that missed volume down does not run the sound up to the top.
+        // Volume up that edits never records, and a hold of it does nothing at all: a finger
+        // that missed volume down does not run the sound up to the top.
         val guarded =
             volumeKeyEnabled &&
                 key == KeyEvent.KEYCODE_VOLUME_UP &&
-                keyMode == KeyMode.BRAIN &&
+                upperSwaps() &&
                 insertionMode == InsertionMode.TEXT_FIELD
         if (!records && !guarded && tap == Tap.VOLUME) {
             return false
@@ -440,15 +443,19 @@ class GigaPisarAccessibilityService : AccessibilityService() {
     /** What a short press of a volume key means. */
     private enum class Tap { VOLUME, SEND, BRAIN }
 
-    /** Holding volume down records; volume up does too in [KeyMode.ANY], in a text field. */
+    /** Volume up is set to swap the text after a dictation, not to record and not left to the system. */
+    private fun upperSwaps(): Boolean = brainSettings.upper != UpperKey.RECORD && brainSettings.upper != UpperKey.VOLUME
+
+    /** Holding volume down records; volume up does too when set to, in a text field. */
     private fun recordsWith(key: Int): Boolean =
         key == KeyEvent.KEYCODE_VOLUME_DOWN ||
-            keyMode == KeyMode.ANY &&
+            brainSettings.upper == UpperKey.RECORD &&
             insertionMode == InsertionMode.TEXT_FIELD
 
     private fun tapAction(key: Int): Tap =
         when {
-            keyMode == KeyMode.BRAIN && key == KeyEvent.KEYCODE_VOLUME_UP ->
+            key == KeyEvent.KEYCODE_VOLUME_UP && brainSettings.upper == UpperKey.VOLUME -> Tap.VOLUME
+            key == KeyEvent.KEYCODE_VOLUME_UP && upperSwaps() ->
                 if (brainKeyArmed()) Tap.BRAIN else Tap.VOLUME
             sendKeyArmed() -> Tap.SEND
             else -> Tap.VOLUME
@@ -461,7 +468,7 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         when (tap) {
             Tap.VOLUME -> stepVolume(key)
             Tap.SEND -> sendWithKey(key)
-            Tap.BRAIN -> editLastTake()
+            Tap.BRAIN -> brainKeyPressed()
         }
     }
 
@@ -928,7 +935,7 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                                     }
                                     if (inserted) armSendKey()
                                     // A password is never sent to a cloud service, by key either.
-                                    insertion?.takeIf { focusedNode?.isPassword != true }?.let { armBrainKey(it, text) }
+                                    insertion?.takeIf { !it.node.isPassword && focusedNode?.isPassword != true }?.let { armBrainKey(it, text, original, brained.label) }
                                 }
                             }
                         }
@@ -969,6 +976,8 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         val text: String,
         val failure: String? = null,
         val original: String? = null,
+        /** What to call [text] when the keys swap versions. */
+        val label: Int = R.string.brain_swapped_edited,
     )
 
     /**
@@ -982,11 +991,12 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         val target = brainTarget(settings) ?: return BrainOutcome(text)
         // With voice commands off, "Писарь, …" is ordinary speech.
         val parsed = if (settings.commands) Brain.parseCommand(text) else null
-        if (parsed == null && !settings.everyTake) return BrainOutcome(text)
+        if (parsed == null && settings.lower == TakeEdit.NONE) return BrainOutcome(text)
         // A failed command still puts in what was said before "Писарь".
         val body = parsed?.first ?: text
         // A short take is fine as dictated: no request, no wait. A command always runs.
-        if (parsed == null && Brain.tooShortToEdit(body, settings.skipShort)) return BrainOutcome(text)
+        // A translation is wanted however short the take is.
+        if (parsed == null && settings.lower != TakeEdit.TRANSLATE && Brain.tooShortToEdit(body, settings.skipShort)) return BrainOutcome(text)
         return try {
             val answer =
                 Brain.transform(
@@ -995,10 +1005,11 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                     target.model,
                     body,
                     parsed?.second,
-                    settings.shorten,
+                    settings.lower == TakeEdit.SHORTEN,
                     settings.prompts,
+                    settings.lowerLanguage.takeIf { settings.lower == TakeEdit.TRANSLATE },
                 )
-            BrainOutcome(answer, original = body.takeIf { it != answer })
+            BrainOutcome(answer, original = body.takeIf { it != answer }, label = if (parsed == null) label(settings.lower) else R.string.brain_swapped_edited)
         } catch (error: BrainException) {
             BrainOutcome(body, failure = error.message ?: "")
         } catch (_: Exception) {
@@ -1022,23 +1033,46 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         return BrainTarget(provider, key, model)
     }
 
-    /** A dictation in a field: where it went and what went in, so the Brain can edit it in place. */
+    /**
+     * A dictation in a field: where it went, the words as said, what the dictation put in
+     * ([lower], the words themselves or the Brain's version) and, once volume up has made
+     * it, that key's own version ([upper]). Volume up swaps the two in the field.
+     */
     private class Take(
         val insertion: TextInserter.Insertion,
-        val text: String,
-    )
+        val original: String,
+        var lower: String,
+        var lowerLabel: Int,
+    ) {
+        var upper: String? = null
+        var upperLabel: Int = R.string.brain_swapped_original
+        var showsUpper = false
 
-    /** Text just went into a field: for a short while volume up may hand it to the Brain. */
+        /** The text in the field now. */
+        val shown: String get() = if (showsUpper) upper ?: lower else lower
+    }
+
+    private fun label(edit: TakeEdit): Int =
+        when (edit) {
+            TakeEdit.NONE -> R.string.brain_swapped_original
+            TakeEdit.TIDY -> R.string.brain_swapped_tidy
+            TakeEdit.SHORTEN -> R.string.brain_swapped_short
+            TakeEdit.TRANSLATE -> R.string.brain_swapped_translated
+        }
+
+    /** Text just went into a field: for a short while volume up may swap it for another version. */
     private fun armBrainKey(
         insertion: TextInserter.Insertion,
         text: String,
+        original: String?,
+        label: Int,
     ) {
-        lastTake = Take(insertion, text)
+        lastTake = Take(insertion, original ?: text, text, if (original == null) R.string.brain_swapped_original else label)
         takePackage = focusedNode?.packageName?.toString() ?: activePackage()
         brainArmedUntil = SystemClock.uptimeMillis() + SEND_KEY_WINDOW_MS
     }
 
-    /** Volume up edits only a fresh dictation, in the same app, with the Brain set up; otherwise it is plain volume. */
+    /** Volume up works only on a fresh dictation, in the same app, with the Brain set up; otherwise it is plain volume. */
     private fun brainKeyArmed(): Boolean =
         lastTake != null &&
             insertionMode == InsertionMode.TEXT_FIELD &&
@@ -1050,17 +1084,83 @@ class GigaPisarAccessibilityService : AccessibilityService() {
             takePackage == activePackage() &&
             !onLockScreen() &&
             findFocusedEditable() != null &&
-            brainTarget(brainSettings) != null
+            brainTarget(brainSettings) != null &&
+            upperHasWork()
 
     /**
-     * Volume up in [KeyMode.BRAIN]: the last dictation goes through the Brain and is swapped in
-     * the field for what came back, with the usual "Вернуть" above it.
+     * Whether a press of volume up would change the text. Set to put the words back when the
+     * dictation went in as said, it has nothing to do and stays a volume key.
      */
-    private fun editLastTake() {
+    private fun upperHasWork(): Boolean {
+        val take = lastTake ?: return false
+        return take.upper != null ||
+            brainSettings.upperEdit != null ||
+            take.lower != take.original ||
+            // Set to the edit volume down makes, which this take went without.
+            brainSettings.upper.edit != null
+    }
+
+    /**
+     * A short press of volume up after a dictation. The first one makes the key's version of
+     * the words as said (an edit by the Brain, or the words themselves when the dictation
+     * went in edited); the next ones swap it with what the dictation put in, with no new
+     * request.
+     */
+    private fun brainKeyPressed() {
         val take = lastTake ?: return
+        if (take.upper != null) {
+            showVersion(take, upper = !take.showsUpper)
+            return
+        }
+        val settings = brainSettings
+        val edit = settings.upperEdit
+        when {
+            edit != null -> makeUpperVersion(take, edit, settings.upperLanguage)
+            take.lower != take.original -> {
+                take.upper = take.original
+                take.upperLabel = R.string.brain_swapped_original
+                showVersion(take, upper = true)
+            }
+            // The key is set to the edit volume down makes, and this take went without it (a
+            // short take is left alone): the key asks for it. Set to "as said", it never does.
+            settings.upper.edit != null -> makeUpperVersion(take, settings.lower, settings.lowerLanguage)
+            // Nothing to swap; [upperHasWork] keeps the key from getting here.
+            else -> Unit
+        }
+    }
+
+    /** Puts one of the two versions of [take] into the field; the keys work on it for another window. */
+    private fun showVersion(
+        take: Take,
+        upper: Boolean,
+        /** The caller says what went wrong itself. */
+        quiet: Boolean = false,
+    ): Boolean {
+        val text = (if (upper) take.upper else take.lower) ?: return false
+        if (!inserter.replaceInserted(take.insertion, take.shown, text)) {
+            if (!quiet) notifyUser(ui().getString(R.string.brain_key_field_changed), 4000)
+            return false
+        }
+        take.showsUpper = upper
+        brainArmedUntil = SystemClock.uptimeMillis() + SEND_KEY_WINDOW_MS
+        armSendKey()
+        pillOffersUndo = false
+        buzz()
+        notifyUser(ui().getString(if (upper) take.upperLabel else take.lowerLabel))
+        return true
+    }
+
+    /**
+     * The words as said go through the Brain, and the answer is swapped into the field for
+     * what is there, with the usual "Вернуть" above it.
+     */
+    private fun makeUpperVersion(
+        take: Take,
+        edit: TakeEdit,
+        language: String,
+    ) {
         val settings = brainSettings
         val target = brainTarget(settings) ?: return
-        val shorten = keyBrainShorten
         val until = brainArmedUntil
         // One edit at a time, and no sending of a text that is about to change.
         brainArmedUntil = 0L
@@ -1074,8 +1174,16 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                 val answer =
                     try {
                         Brain
-                            .transform(target.provider, target.key, target.model, take.text, null, shorten, settings.prompts)
-                            .let { if (noFinalPeriod) SimpleSyntax.withoutFinalPeriod(it) else it }
+                            .transform(
+                                target.provider,
+                                target.key,
+                                target.model,
+                                take.original,
+                                null,
+                                edit == TakeEdit.SHORTEN,
+                                settings.prompts,
+                                language.takeIf { edit == TakeEdit.TRANSLATE },
+                            ).let { if (noFinalPeriod) SimpleSyntax.withoutFinalPeriod(it) else it }
                     } catch (error: BrainException) {
                         failure = error.message ?: ""
                         null
@@ -1087,26 +1195,31 @@ class GigaPisarAccessibilityService : AccessibilityService() {
                 withContext(Dispatchers.Main) {
                     // A new dictation began meanwhile: this answer is about a text that is no longer the last one.
                     if (lastTake !== take) return@withContext
+                    val before = take.shown
                     when {
                         answer == null -> {
-                            // The text stays as dictated; the keys work on it as before the press.
+                            // The text stays as it was; the keys work on it as before the press.
                             brainArmedUntil = maxOf(until, SystemClock.uptimeMillis() + SEND_KEY_RETRY_MS)
                             armSendKey()
                             notifyUser(ui().getString(R.string.brain_key_failed, failure), 6000)
                         }
 
-                        answer == take.text -> {
+                        answer == before -> {
                             armSendKey()
                             notifyUser(ui().getString(R.string.brain_key_unchanged))
                         }
 
-                        !inserter.replaceInserted(take.insertion, take.text, answer) ->
+                        !inserter.replaceInserted(take.insertion, before, answer) ->
                             notifyUser(ui().getString(R.string.brain_key_field_changed), 4000)
 
                         else -> {
-                            lastTake = Take(take.insertion, answer)
+                            take.upper = answer
+                            take.upperLabel = label(edit)
+                            take.showsUpper = true
+                            // Another press of volume up puts back what the dictation put in.
+                            brainArmedUntil = SystemClock.uptimeMillis() + SEND_KEY_WINDOW_MS
                             armSendKey()
-                            offerUndo(answer, take.text, take.insertion)
+                            offerUndo(answer, before, take.insertion)
                         }
                     }
                 }
@@ -1135,6 +1248,33 @@ class GigaPisarAccessibilityService : AccessibilityService() {
             focusedFieldBounds(),
             UNDO_OFFER_MS,
         ) {
+            // The same swap volume up makes, so the key knows which version is in the field.
+            val take = lastTake
+            if (take != null && take.insertion === insertion && take.shown == answer) {
+                val restored =
+                    if (take.showsUpper) {
+                        showVersion(take, upper = false, quiet = true)
+                    } else if (take.upper == null && brainSettings.upperEdit == null) {
+                        // Volume up would have put these words back too: it now swaps them with the edit.
+                        take.upper = take.original
+                        take.upperLabel = R.string.brain_swapped_original
+                        showVersion(take, upper = true, quiet = true).also { if (!it) take.upper = null }
+                    } else if (inserter.replaceInserted(take.insertion, take.lower, take.original)) {
+                        // The edit is dropped: the words as said are what the dictation put in.
+                        take.lower = take.original
+                        take.lowerLabel = R.string.brain_swapped_original
+                        armSendKey()
+                        true
+                    } else {
+                        false
+                    }
+                if (!restored) {
+                    // The field changed meanwhile: nothing is touched, the text is not lost.
+                    inserter.putToClipboard(original)
+                    notifyUser(ui().getString(R.string.brain_undo_changed), 4000)
+                }
+                return@showAction
+            }
             val restored = insertion != null && inserter.replaceInserted(insertion, answer, original)
             if (!restored) {
                 inserter.putToClipboard(original)
@@ -1366,6 +1506,7 @@ class GigaPisarAccessibilityService : AccessibilityService() {
         sendKeyEnabled &&
             insertionMode == InsertionMode.TEXT_FIELD &&
             !recording &&
+            recordingJob?.isActive != true &&
             brainJob?.isActive != true &&
             SystemClock.uptimeMillis() < sendArmedUntil &&
             takePackage != null &&

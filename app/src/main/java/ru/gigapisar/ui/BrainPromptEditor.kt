@@ -38,6 +38,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import ru.gigapisar.R
@@ -49,6 +52,7 @@ private fun title(kind: Brain.Kind): Int =
         Brain.Kind.COMMAND -> R.string.brain_prompt_commands
         Brain.Kind.TIDY -> R.string.brain_style_tidy
         Brain.Kind.SHORTEN -> R.string.brain_style_short
+        Brain.Kind.TRANSLATE -> R.string.brain_style_translate
     }
 
 /** What Pisar itself adds after the instructions; shown so that nothing goes to the model unseen. */
@@ -57,27 +61,8 @@ private fun addition(kind: Brain.Kind): Int? =
         Brain.Kind.COMMAND -> R.string.brain_prompt_adds_command
         Brain.Kind.TIDY -> null
         Brain.Kind.SHORTEN -> R.string.brain_prompt_adds_length
+        Brain.Kind.TRANSLATE -> R.string.brain_prompt_adds_language
     }
-
-/** "Instructions": one row per option of the Brain, each opens its editor. */
-@Composable
-internal fun BrainPromptRows(
-    prompts: Brain.Custom,
-    onOpen: (Brain.Kind) -> Unit,
-) {
-    SectionTitle(R.string.brain_prompts)
-    for (kind in Brain.Kind.entries) {
-        ListItem(
-            headlineContent = { Text(stringResource(title(kind))) },
-            supportingContent = {
-                Text(stringResource(if (prompts.of(kind) == null) R.string.brain_prompt_standard else R.string.brain_prompt_own))
-            },
-            leadingContent = { Icon(Icons.Outlined.EditNote, contentDescription = null) },
-            trailingContent = { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null) },
-            modifier = Modifier.clickable { onOpen(kind) },
-        )
-    }
-}
 
 /**
  * The instructions of one option. The core rules on top and at the bottom are locked: with
@@ -108,24 +93,32 @@ internal fun BrainPromptEditor(
             Text(
                 stringResource(R.string.brain_prompt_title, stringResource(title(kind))),
                 style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
             )
         }
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
         ) {
             Locked(standard.head)
             Text(
                 stringResource(R.string.brain_prompt_yours),
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp, top = 8.dp),
             )
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it.take(SettingsRepository.BRAIN_PROMPT_MAX) },
                 textStyle = MaterialTheme.typography.bodyMedium,
                 minLines = 6,
+                shape = RoundedCornerShape(26.dp),
+                colors =
+                    OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedBorderColor = Color.Transparent,
+                    ),
                 modifier = Modifier.fillMaxWidth(),
             )
             Locked(
@@ -163,11 +156,11 @@ private fun Locked(
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(26.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(
                     Icons.Outlined.Lock,
